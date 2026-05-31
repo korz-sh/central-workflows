@@ -35,6 +35,9 @@ on:
         required: true
       VERCEL_PROJECT_ID:
         required: true
+      DISCORD_WEBHOOK_URL:
+        required: false
+        description: 'Discord webhook URL for deployment notifications'
     outputs:
       deployment-url:
         description: 'Vercel deployment URL'
@@ -92,3 +95,18 @@ jobs:
             --token=$VERCEL_TOKEN)
           echo "deployment-url=$URL" >> $GITHUB_OUTPUT
           echo "🚀 Deployed: $URL"
+
+      - name: Notify Discord
+        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: '${{ inputs.environment == ''production'' && ''🔥 PRODUCTION'' || ''📦 PREVIEW'' }} Deploy: ${{ github.repository }}'
+          description: |
+            **Service:** ${{ github.repository }}
+            **Environment:** ${{ inputs.environment }}
+            **Status:** ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+            **URL:** ${{ steps.deploy.outputs.deployment-url }}
+            **Commit:** `${{ github.sha }}` (${{ github.actor }})
+          color: ${{ job.status == 'success' && (inputs.environment == 'production' && 3329330 || 6937668) || 16711680 }}
