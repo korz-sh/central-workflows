@@ -1,0 +1,94 @@
+name: Deploy to Vercel (Reusable)
+
+# Staging: every push to the configured branch → preview deployment.
+# Production: push to main → production deployment (when ready).
+#
+# Required GitHub secrets in the caller repo:
+#   VERCEL_TOKEN     — Vercel personal/team access token
+#   VERCEL_ORG_ID    — Vercel team ID (team_xxx)
+#   VERCEL_PROJECT_ID — Vercel project ID (prj_xxx)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: false
+        type: string
+        default: 'preview'
+        description: 'preview | production'
+      node-version:
+        required: false
+        type: string
+        default: '20'
+      package-manager:
+        required: false
+        type: string
+        default: 'pnpm'
+      pnpm-version:
+        required: false
+        type: string
+        default: '9.1.4'
+    secrets:
+      VERCEL_TOKEN:
+        required: true
+      VERCEL_ORG_ID:
+        required: true
+      VERCEL_PROJECT_ID:
+        required: true
+    outputs:
+      deployment-url:
+        description: 'Vercel deployment URL'
+        value: ${{ jobs.deploy.outputs.deployment-url }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: ${{ inputs.package-manager == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          vercel pull --yes \
+            --environment=${{ inputs.environment }} \
+            --token=$VERCEL_TOKEN
+
+      - name: Build
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel build ${{ inputs.environment == 'production' && '--prod' || '' }} --token=$VERCEL_TOKEN
+
+      - name: Deploy
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          URL=$(vercel deploy --prebuilt \
+            ${{ inputs.environment == 'production' && '--prod' || '' }} \
+            --token=$VERCEL_TOKEN)
+          echo "deployment-url=$URL" >> $GITHUB_OUTPUT
+          echo "🚀 Deployed: $URL"

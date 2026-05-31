@@ -186,6 +186,37 @@ jobs:
 
 ---
 
+#### `deploy-vercel.yml` — Deploy Next.js to Vercel
+
+For services deployed to Vercel (not Lambda). Staging pushes produce preview deployments; production is gated by the `environment: production` input.
+
+```yaml
+on:
+  push:
+    branches: [master, develop]
+
+jobs:
+  deploy:
+    uses: korz-sh/central-workflows/.github/workflows/deploy-vercel.yml@main
+    with:
+      environment: ${{ github.ref_name == 'master' && 'production' || 'preview' }}
+      node-version: '20'        # optional
+      package-manager: pnpm     # optional: npm | pnpm, default: pnpm
+      pnpm-version: '9.1.4'     # optional
+    secrets:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+```
+
+**Required GitHub secrets:** `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+
+**Outputs:** `deployment-url`
+
+**Privacy:** Set `PREVIEW_PASSWORD` in Vercel project env vars to enable the middleware password gate. Remove it (or leave unset) to make the site public.
+
+---
+
 #### `publish-status.yml` — Publish coverage to korz-status dashboard
 
 Called internally by `ci-dotnet.yml`, `ci-go.yml`, and `ci-node.yml`. Pushes coverage percentage and badge to [korz-status](https://github.com/korz-sh/korz-status).
@@ -238,4 +269,4 @@ Triggers (`on: push/pull_request` with `paths:` and `branches:`) cannot be passe
 | payments-service-api | ECR (Node) | GHCR | node | node | lambda |
 | rbac-api | ECR (.NET) | — | dotnet | dotnet | lambda |
 | web-api | ECR (.NET) | GHCR | dotnet | dotnet | lambda |
-| web-client | — | GHCR | node | node | web-client |
+| web-client | — | GHCR | node | node | vercel |
