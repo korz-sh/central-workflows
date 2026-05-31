@@ -51,9 +51,6 @@ on:
         required: true
       AWS_ROLE_ARN_PROD:
         required: true
-      DISCORD_WEBHOOK_URL:
-        required: false
-        description: 'Discord webhook URL for deployment notifications'
 
 jobs:
   deploy-staging:
@@ -102,11 +99,22 @@ jobs:
             --region ${{ inputs.aws-region-staging }}
           echo "✅ Lambda ready"
 
+      - name: Fetch Discord webhook from SSM
+        id: discord
+        run: |
+          WEBHOOK=$(aws ssm get-parameter \
+            --name /korz/discord-webhook-url \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region us-east-1 2>/dev/null || echo "")
+          echo "webhook=$WEBHOOK" >> $GITHUB_OUTPUT
+
       - name: Notify Discord (staging)
-        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
+        if: always() && steps.discord.outputs.webhook != ''
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook_url: ${{ steps.discord.outputs.webhook }}
           status: ${{ job.status }}
           title: '🚀 Staging Deploy: ${{ github.repository }}'
           description: |
@@ -168,11 +176,22 @@ jobs:
           git tag -a "${TAG}-prod" -m "Prod release: ${TAG}" || true
           git push origin "${TAG}-prod" || true
 
+      - name: Fetch Discord webhook from SSM
+        id: discord
+        run: |
+          WEBHOOK=$(aws ssm get-parameter \
+            --name /korz/discord-webhook-url \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region us-east-1 2>/dev/null || echo "")
+          echo "webhook=$WEBHOOK" >> $GITHUB_OUTPUT
+
       - name: Notify Discord (prod)
-        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
+        if: always() && steps.discord.outputs.webhook != ''
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook_url: ${{ steps.discord.outputs.webhook }}
           status: ${{ job.status }}
           title: '🔥 PRODUCTION Deploy: ${{ github.repository }}'
           description: |
