@@ -1,0 +1,111 @@
+name: CI Node (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '20.x'
+      service-name:
+        required: true
+        type: string
+      package-manager:
+        required: false
+        type: string
+        default: 'npm'
+        description: 'npm or pnpm'
+      pnpm-version:
+        required: false
+        type: string
+        default: '9.1.4'
+      coverage-glob:
+        required: false
+        type: string
+        default: 'src/**/*.ts'
+        description: 'Glob for --collectCoverageFrom (e.g. src/**/*.{ts,tsx})'
+      run-type-check:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: ${{ inputs.package-manager == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm install' }}
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run lint' || 'npm run lint' }}
+      - if: ${{ inputs.run-type-check }}
+        run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run type-check' || 'npm run type-check' }}
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run build' || 'npm run build' }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: ${{ inputs.package-manager == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm install' }}
+      - run: ${{ inputs.package-manager == 'pnpm' && format('pnpm test -- --coverage --collectCoverageFrom="{0}"', inputs.coverage-glob) || format('npm test -- --coverage --collectCoverageFrom="{0}"', inputs.coverage-glob) }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-node-${{ inputs.service-name }}
+          path: coverage/
+          retention-days: 1
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-node-${{ inputs.service-name }}
+          path: coverage/
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          if [ -f "coverage/coverage-summary.json" ]; then
+            COVERAGE=$(jq '.total.lines.pct' coverage/coverage-summary.json)
+          else
+            COVERAGE="0"
+          fi
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Coverage: $COVERAGE%"
+
+      - name: Publish coverage to korz-status
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
+        with:
+          service-name: ${{ inputs.service-name }}
+          coverage-percentage: ${{ steps.coverage.outputs.percentage }}
+          run-id: ${{ github.run_id }}
+        secrets:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

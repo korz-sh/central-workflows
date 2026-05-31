@@ -1,0 +1,81 @@
+name: CI .NET (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        required: false
+        type: string
+        default: '10.0.x'
+      service-name:
+        required: true
+        type: string
+        description: 'Service name for korz-status reporting (e.g. rbac-api)'
+      coverage-json-path:
+        required: false
+        type: string
+        default: 'coverage/coverage.json'
+        description: 'Path to reportgenerator Json output'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - run: dotnet restore
+      - run: dotnet build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - run: dotnet restore
+      - run: dotnet test --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
+      - run: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"CoberturaXml,Json,Html"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-dotnet-${{ inputs.service-name }}
+          path: |
+            TestResults/
+            coverage/
+          retention-days: 1
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-dotnet-${{ inputs.service-name }}
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          if [ -f "${{ inputs.coverage-json-path }}" ]; then
+            COVERAGE=$(jq '.total.lines.pct' "${{ inputs.coverage-json-path }}")
+          else
+            COVERAGE="0"
+          fi
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Coverage: $COVERAGE%"
+
+      - name: Publish coverage to korz-status
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
+        with:
+          service-name: ${{ inputs.service-name }}
+          coverage-percentage: ${{ steps.coverage.outputs.percentage }}
+          run-id: ${{ github.run_id }}
+        secrets:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

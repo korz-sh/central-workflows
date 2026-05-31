@@ -1,0 +1,142 @@
+name: Deploy Web Client (Reusable)
+
+# Inline build+push strategy: web-client does not use a separate build.yml.
+# Staging: builds image, pushes to ECR, deploys to Lambda, stores tag in SSM.
+# Prod: reads tag from SSM (promote dev image), deploys to Lambda.
+
+on:
+  workflow_call:
+    inputs:
+      ecr-repository:
+        required: true
+        type: string
+        description: 'ECR repository path (e.g. korz/web-client)'
+      ssm-tag-param:
+        required: false
+        type: string
+        default: '/korz/web-client/latest-dev-tag'
+        description: 'SSM parameter that stores the latest staging image tag'
+      aws-region:
+        required: false
+        type: string
+        default: 'us-east-1'
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+
+jobs:
+  build-and-deploy-staging:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.image-tag }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tag
+        id: meta
+        run: |
+          IMAGE_TAG="v$(date +%Y%m%d-%H%M%S)"
+          echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "Image tag: ${IMAGE_TAG}"
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image-tag }}
+        run: |
+          docker build -f Dockerfile.lambda \
+            -t $ECR_REGISTRY/${{ inputs.ecr-repository }}:$IMAGE_TAG \
+            -t $ECR_REGISTRY/${{ inputs.ecr-repository }}:latest .
+          docker push $ECR_REGISTRY/${{ inputs.ecr-repository }}:$IMAGE_TAG
+          docker push $ECR_REGISTRY/${{ inputs.ecr-repository }}:latest
+
+      - name: Update Lambda function (staging)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_STAGING }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image-tag }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${{ inputs.ecr-repository }}:${IMAGE_TAG}"
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --image-uri $IMAGE_URI \
+            --region ${{ inputs.aws-region }}
+          echo "✅ Lambda updated: $IMAGE_URI"
+
+      - name: Store tag in SSM for prod promotion
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.image-tag }}
+        run: |
+          aws ssm put-parameter \
+            --name "${{ inputs.ssm-tag-param }}" \
+            --value "$IMAGE_TAG" \
+            --type String \
+            --overwrite \
+            --region ${{ inputs.aws-region }}
+          echo "✅ SSM tag stored: $IMAGE_TAG"
+
+  deploy-prod:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get promoted tag from SSM
+        id: tag
+        run: |
+          TAG=$(aws ssm get-parameter \
+            --name "${{ inputs.ssm-tag-param }}" \
+            --query 'Parameter.Value' \
+            --output text \
+            --region ${{ inputs.aws-region }})
+          echo "image-tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Promoting tag: ${TAG}"
+
+      - name: Update Lambda function (prod)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_PROD }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image-tag }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${{ inputs.ecr-repository }}:${IMAGE_TAG}"
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --image-uri $IMAGE_URI \
+            --region ${{ inputs.aws-region }}
+          echo "✅ Lambda updated: $IMAGE_URI"
+
+      - name: Create release tag
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.image-tag }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "${{ env.IMAGE_TAG }}-prod" -m "Prod release: ${{ env.IMAGE_TAG }}"
+          git push origin "${{ env.IMAGE_TAG }}-prod"

@@ -1,0 +1,45 @@
+name: PR Check Go (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: false
+        type: string
+        default: '1.22'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+      - run: go mod download
+      - run: go test -v -race -coverprofile=coverage.out ./...
+      - uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+      - run: go mod download
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bootstrap ./cmd/server
+      - run: file bootstrap && ./bootstrap --version || echo "Binary built successfully"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+      - uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest

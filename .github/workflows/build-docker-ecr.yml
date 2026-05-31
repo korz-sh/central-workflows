@@ -1,0 +1,114 @@
+name: Build & Push to ECR (Reusable)
+
+# AWS Lambda requires Docker v2 manifest, not OCI index — provenance: false is enforced.
+
+on:
+  workflow_call:
+    inputs:
+      ecr-repo:
+        required: true
+        type: string
+        description: 'ECR repository name, e.g. web-api, identity-v2'
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile.lambda'
+        description: 'Path to Dockerfile'
+      aws-region:
+        required: false
+        type: string
+        default: 'us-east-2'
+      pass-github-token-build-arg:
+        required: false
+        type: boolean
+        default: true
+        description: 'Pass GITHUB_ACTOR and GITHUB_TOKEN as Docker build args'
+    secrets:
+      AWS_ROLE_ARN_STAGING:
+        required: true
+      GH_PAT:
+        required: false
+    outputs:
+      image-uri:
+        description: 'Full ECR image URI with version tag'
+        value: ${{ jobs.build-and-push.outputs.image-uri }}
+      image-tag:
+        description: 'Version tag (e.g. v20260531.123456)'
+        value: ${{ jobs.build-and-push.outputs.image-tag }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      image-uri: ${{ steps.meta.outputs.image-uri }}
+      image-tag: ${{ steps.meta.outputs.image-tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set ECR registry
+        run: echo "REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION="v$(date +'%Y%m%d.%H%M%S')"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Version: ${VERSION}"
+
+      - name: Build and push (with GitHub token build args)
+        if: ${{ inputs.pass-github-token-build-arg }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          provenance: false
+          build-args: |
+            GITHUB_ACTOR=${{ github.actor }}
+            GITHUB_TOKEN=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
+
+      - name: Build and push (without GitHub token build args)
+        if: ${{ !inputs.pass-github-token-build-arg }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
+
+      - name: Set image URI metadata
+        id: meta
+        run: |
+          IMAGE_URI="${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}"
+          echo "image-uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "image-tag=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "🐳 Image URI: ${IMAGE_URI}"
+
+      - name: Create git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.version }}" || true
+          git push origin "${{ steps.version.outputs.version }}" || true

@@ -1,0 +1,59 @@
+name: Publish to GHCR (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+        description: 'Image name, e.g. web-api, entitlement-api'
+      build-args:
+        required: false
+        type: string
+        default: ''
+        description: 'Newline-separated Docker build args (e.g. NPM_TOKEN=xxx)'
+    secrets:
+      NPM_TOKEN:
+        required: false
+      NPM_USERNAME:
+        required: false
+    outputs:
+      image-tag:
+        description: 'Published image tag (e.g. v20260531.1234)'
+        value: ${{ jobs.publish.outputs.image-tag }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build & Push to GHCR
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate version tag
+        id: version
+        run: echo "tag=$(date -u +'%Y%m%d.%H%M')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/korz-sh/${{ inputs.image-name }}:latest
+            ghcr.io/korz-sh/${{ inputs.image-name }}:v${{ steps.version.outputs.tag }}
+          build-args: ${{ inputs.build-args }}

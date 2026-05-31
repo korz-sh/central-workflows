@@ -1,0 +1,147 @@
+name: Deploy to Lambda (Reusable)
+
+# Caller must use `on: workflow_run` and pass event context as inputs.
+# See each service's deploy.yml for the caller pattern.
+
+on:
+  workflow_call:
+    inputs:
+      ecr-repo:
+        required: true
+        type: string
+        description: 'ECR repository name (explicit — no derivation from repo name)'
+      build-conclusion:
+        required: true
+        type: string
+        description: 'Passed from: github.event.workflow_run.conclusion'
+      trigger-branch:
+        required: true
+        type: string
+        description: 'Passed from: github.event.workflow_run.head_branch'
+      staging-branch:
+        required: false
+        type: string
+        default: 'develop'
+        description: 'Primary branch that triggers staging deploy'
+      extra-staging-branch:
+        required: false
+        type: string
+        default: ''
+        description: 'Optional second branch that also triggers staging (e.g. master)'
+      aws-region-staging:
+        required: false
+        type: string
+        default: 'us-east-2'
+      aws-region-prod:
+        required: false
+        type: string
+        default: 'us-east-1'
+      create-release-tag:
+        required: false
+        type: boolean
+        default: false
+        description: 'Create a git -prod release tag after prod deploy'
+    secrets:
+      AWS_ROLE_ARN_STAGING:
+        required: true
+      AWS_ROLE_ARN_PROD:
+        required: true
+
+jobs:
+  deploy-staging:
+    if: |
+      inputs.build-conclusion == 'success' &&
+      (inputs.trigger-branch == inputs.staging-branch ||
+       (inputs.extra-staging-branch != '' && inputs.trigger-branch == inputs.extra-staging-branch))
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: ${{ inputs.aws-region-staging }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update Lambda function (staging)
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_STAGING }}
+        run: |
+          if [ -z "$LAMBDA_FUNCTION" ]; then
+            echo "⚠️  LAMBDA_FUNCTION_STAGING not set"
+            exit 1
+          fi
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr-repo }}:latest"
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --image-uri $IMAGE_URI \
+            --region ${{ inputs.aws-region-staging }}
+          echo "✅ Lambda updated: $IMAGE_URI"
+
+      - name: Wait for Lambda to stabilize
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_STAGING }}
+        run: |
+          aws lambda wait function-updated \
+            --function-name $LAMBDA_FUNCTION \
+            --region ${{ inputs.aws-region-staging }}
+          echo "✅ Lambda ready"
+
+  deploy-prod:
+    if: inputs.build-conclusion == 'success' && inputs.trigger-branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: ${{ inputs.aws-region-prod }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update Lambda function (prod)
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_PROD }}
+        run: |
+          if [ -z "$LAMBDA_FUNCTION" ]; then
+            echo "⚠️  LAMBDA_FUNCTION_PROD not set"
+            exit 1
+          fi
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr-repo }}:latest"
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --image-uri $IMAGE_URI \
+            --region ${{ inputs.aws-region-prod }}
+          echo "✅ Lambda updated: $IMAGE_URI"
+
+      - name: Wait for Lambda to stabilize
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_PROD }}
+        run: |
+          aws lambda wait function-updated \
+            --function-name $LAMBDA_FUNCTION \
+            --region ${{ inputs.aws-region-prod }}
+          echo "✅ Lambda ready"
+
+      - name: Create release tag
+        if: ${{ inputs.create-release-tag }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          TAG=$(git describe --tags --always | head -1)
+          git tag -a "${TAG}-prod" -m "Prod release: ${TAG}" || true
+          git push origin "${TAG}-prod" || true
