@@ -28,6 +28,11 @@ on:
         type: string
         default: ''
         description: 'Optional second branch that also triggers staging (e.g. master)'
+      prod-branch:
+        required: false
+        type: string
+        default: 'main'
+        description: 'Branch that triggers prod deploy. Set to empty string to disable prod deploy.'
       aws-region-staging:
         required: false
         type: string
@@ -95,7 +100,7 @@ jobs:
           echo "✅ Lambda ready"
 
   deploy-prod:
-    if: inputs.build-conclusion == 'success' && inputs.trigger-branch == 'main'
+    if: inputs.build-conclusion == 'success' && inputs.prod-branch != '' && inputs.trigger-branch == inputs.prod-branch
     runs-on: ubuntu-latest
     permissions:
       id-token: write
