@@ -72,6 +72,7 @@ jobs:
 
       - name: Publish coverage to korz-status
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        continue-on-error: true
         run: |
           git clone https://x-access-token:${GH_TOKEN}@github.com/korz-sh/korz-status.git korz-status --depth=1
           cd korz-status
