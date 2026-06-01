@@ -39,7 +39,7 @@ jobs:
       - run: dotnet test --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
       - run: |
           dotnet tool install -g dotnet-reportgenerator-globaltool
-          reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"CoberturaXml,Json,Html"
+          reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"Cobertura;JsonSummary;Html"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -73,7 +73,7 @@ jobs:
       - name: Publish coverage to korz-status
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
         run: |
-          gh repo clone korz-sh/korz-status korz-status -- --depth=1
+          git clone https://x-access-token:${GH_TOKEN}@github.com/korz-sh/korz-status.git korz-status --depth=1
           cd korz-status
 
           SERVICE="${{ inputs.service-name }}"
@@ -106,6 +106,7 @@ jobs:
 
           git config user.name "Korz Bot"
           git config user.email "bot@korz.sh"
+          git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/korz-sh/korz-status.git
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "chore: update coverage for ${SERVICE} - ${COVERAGE}%"
