@@ -72,10 +72,44 @@ jobs:
 
       - name: Publish coverage to korz-status
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-        uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
-        with:
-          service-name: ${{ inputs.service-name }}
-          coverage-percentage: ${{ steps.coverage.outputs.percentage }}
-          run-id: ${{ github.run_id }}
-        secrets:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh repo clone korz-sh/korz-status korz-status -- --depth=1
+          cd korz-status
+
+          SERVICE="${{ inputs.service-name }}"
+          COVERAGE="${{ steps.coverage.outputs.percentage }}"
+
+          mkdir -p reports .badges
+
+          cat > reports/${SERVICE}-coverage.json <<EOF
+          {
+            "service": "${SERVICE}",
+            "coverage": ${COVERAGE},
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "source_run_id": "${{ github.run_id }}"
+          }
+          EOF
+
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then COLOR="4c1"
+          elif (( $(echo "$COVERAGE >= 70" | bc -l) )); then COLOR="dfb317"
+          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then COLOR="fe7d37"
+          else COLOR="e05d44"; fi
+
+          cat > .badges/${SERVICE}-coverage.svg <<EOF
+          <svg xmlns="http://www.w3.org/2000/svg" width="150" height="20">
+            <rect width="100" height="20" fill="#555"/>
+            <rect x="100" width="50" height="20" fill="#${COLOR}"/>
+            <text x="50" y="14" fill="#fff" text-anchor="middle" font-family="Verdana" font-size="11">${SERVICE}</text>
+            <text x="125" y="14" fill="#fff" text-anchor="middle" font-family="Verdana" font-size="11">${COVERAGE}%</text>
+          </svg>
+          EOF
+
+          git config user.name "Korz Bot"
+          git config user.email "bot@korz.sh"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update coverage for ${SERVICE} - ${COVERAGE}%"
+            git push
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
