@@ -259,14 +259,3 @@ secrets:
 ## What stays local per service
 
 Triggers (`on: push/pull_request` with `paths:` and `branches:`) cannot be passed into `workflow_call` — each service keeps its own trigger block. Everything else lives here.
-
-## Services using these workflows
-
-| Service | build | publish | ci | pr-check | deploy |
-|---|---|---|---|---|---|
-| entitlement-api | ECR (.NET) | GHCR | dotnet | dotnet | lambda |
-| identity-api-v2 | ECR (Go) | GHCR | go | go | lambda |
-| payments-service-api | ECR (Node) | GHCR | node | node | lambda |
-| rbac-api | ECR (.NET) | — | dotnet | dotnet | lambda |
-| web-api | ECR (.NET) | GHCR | dotnet | dotnet | lambda |
-| web-client | — | GHCR | node | node | vercel |
