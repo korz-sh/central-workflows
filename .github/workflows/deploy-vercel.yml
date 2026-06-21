@@ -78,15 +78,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          # Load the pulled Vercel env into the shell so Next.js prerender workers see
-          # NEXT_PUBLIC_* vars. `vercel build` does not export the pulled .env into the
-          # `next build` process env, so static generation of pages that read a
-          # NEXT_PUBLIC_* var at module load (e.g. an env guard) fails with
-          # "Missing required environment variable". Sourcing the pulled file fixes it.
-          ENV_FILE=".vercel/.env.${{ inputs.environment }}.local"
-          if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-          vercel build ${{ inputs.environment == 'production' && '--prod' || '' }} --token=$VERCEL_TOKEN
+        run: vercel build ${{ inputs.environment == 'production' && '--prod' || '' }} --token=$VERCEL_TOKEN
 
       - name: Deploy
         id: deploy
