@@ -18,20 +18,11 @@ on:
         description: 'Path to reportgenerator Json output'
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ inputs.dotnet-version }}
-      - run: dotnet restore
-      # KOR-53 Q7: --no-restore — the previous step already restored; without it
-      # `dotnet build` restores a second time. (The `validate` job itself duplicates
-      # `test`'s compile and should be dropped, but that's deferred to KOR-54 because
-      # a service may pin it as a required status check in branch protection.)
-      - run: dotnet build --no-restore
-
+  # KOR-54: the `validate` job (restore + build) was dropped. It duplicated the compile
+  # that `test` already does — a whole second runner + full restore + build for no
+  # artifact `test` didn't already produce. Confirmed safe: none of the 3 consumers
+  # (web-api, rbac-api, entitlement-api) pin `validate` as a required status check in
+  # branch protection (all have zero required checks), so removing it breaks no merge.
   test:
     runs-on: ubuntu-latest
     steps:
