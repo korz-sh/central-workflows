@@ -26,7 +26,11 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
       - run: dotnet restore
-      - run: dotnet build
+      # KOR-53 Q7: --no-restore — the previous step already restored; without it
+      # `dotnet build` restores a second time. (The `validate` job itself duplicates
+      # `test`'s compile and should be dropped, but that's deferred to KOR-54 because
+      # a service may pin it as a required status check in branch protection.)
+      - run: dotnet build --no-restore
 
   test:
     runs-on: ubuntu-latest
@@ -36,7 +40,8 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
       - run: dotnet restore
-      - run: dotnet test --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
+      # --no-restore: reuse the restore above instead of restoring implicitly again.
+      - run: dotnet test --no-restore --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
       - run: |
           dotnet tool install -g dotnet-reportgenerator-globaltool
           reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"Cobertura;JsonSummary;Html"

@@ -85,6 +85,13 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
+          # KOR-53 Q1: layer cache, scoped per ecr-repo so a caller that builds more
+          # than one image (e.g. korz-query build + build-deployer) doesn't clobber its
+          # own cache. type=gha is fine here — every consumer of this reusable ships a
+          # small .NET/Python image (NOT the heavy mcp images, which stay on registry
+          # cache to avoid the 10GB gha limit).
+          cache-from: type=gha,scope=${{ inputs.ecr-repo }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}
 
       - name: Build and push (without GitHub token build args)
         if: ${{ !inputs.pass-github-token-build-arg }}
@@ -97,6 +104,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
+          cache-from: type=gha,scope=${{ inputs.ecr-repo }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}
 
       - name: Set image URI metadata
         id: meta
