@@ -18,7 +18,14 @@ jobs:
           dotnet-version: ${{ inputs.dotnet-version }}
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore
-      - run: dotnet test --configuration Release --no-build --verbosity normal || echo "No tests found"
+      # KOR-155: this used to end in `|| echo "No tests found"`, which replaced the
+      # exit code with 0 — the job was green whether the tests passed, failed, or
+      # did not exist. rbac-api had 15 failing tests behind that tick for months
+      # (KOR-158), including the SNS event contract.
+      #
+      # A repo genuinely without tests should say so deliberately, not have the
+      # failure swallowed in a way that looks identical to success.
+      - run: dotnet test --configuration Release --no-build --verbosity normal
 
   lint:
     runs-on: ubuntu-latest
@@ -28,4 +35,9 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
       - run: dotnet restore
-      - run: dotnet format --verify-no-changes || echo "Format issues found"
+      # KOR-155: `|| echo "Format issues found"` made this decorative. Expect it to
+      # go red the first time somebody looks — that is the information, not an
+      # obstacle. If formatting is not going to be enforced, delete the step; if it
+      # is, fix the formatting. A check that reports its own failure as success is
+      # the one option that helps nobody.
+      - run: dotnet format --verify-no-changes

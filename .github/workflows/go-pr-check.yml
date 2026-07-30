@@ -31,7 +31,22 @@ jobs:
           go-version: ${{ inputs.go-version }}
       - run: go mod download
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bootstrap ./cmd/server
-      - run: file bootstrap && ./bootstrap --version || echo "Binary built successfully"
+      # KOR-155 note: the `|| echo` here is NOT the same defect as the swallowed
+      # test gates. `go build` above is the real check and its exit code is
+      # honoured; this line only confirms the artifact exists and is executable.
+      #
+      # `./bootstrap --version` is best-effort on purpose — a Lambda bootstrap
+      # binary has no obligation to implement a --version flag, and demanding one
+      # would fail builds over a convention nobody agreed to. So the `file` call
+      # is the assertion and the invocation is informational.
+      #
+      # Split in two so the part that must hold, holds.
+      - name: The binary exists and is executable
+        run: |
+          test -x bootstrap
+          file bootstrap
+      - name: Version banner, if the binary offers one
+        run: ./bootstrap --version || echo "(no --version flag — not required)"
 
   lint:
     runs-on: ubuntu-latest

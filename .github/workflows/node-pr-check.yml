@@ -63,7 +63,12 @@ jobs:
           cache: ${{ inputs.package-manager }}
 
       - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci' }}
-      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run test:coverage' || 'npm run test' }} || echo "Tests completed"
+      # KOR-155: this used to end in `|| echo "Tests completed"`, which replaced
+      # the exit code with 0 — the job was green whether the tests passed or
+      # failed. payments-service-api's suite CRASHES today (an async function
+      # tested with expect(...).toThrow() leaves an unhandled rejection that kills
+      # the Jest worker) and CI never said so. See KOR-159.
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run test:coverage' || 'npm run test' }}
 
       - uses: codecov/codecov-action@v3
         with:
@@ -90,7 +95,10 @@ jobs:
 
       - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci' }}
       - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm exec playwright install --with-deps' || 'npx playwright install --with-deps' }}
-      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run test:e2e' || 'npm run test:e2e' }} || echo "E2E tests completed"
+      # KOR-155: same swallowed exit code as the unit tests above. An e2e suite
+      # that cannot fail is worse than no e2e suite, because it costs minutes AND
+      # manufactures confidence.
+      - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run test:e2e' || 'npm run test:e2e' }}
 
       - uses: actions/upload-artifact@v4
         if: always()
