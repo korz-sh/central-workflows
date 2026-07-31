@@ -24,7 +24,7 @@ jobs:
   # (web-api, rbac-api, entitlement-api) pin `validate` as a required status check in
   # branch protection (all have zero required checks), so removing it breaks no merge.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -46,7 +46,7 @@ jobs:
           retention-days: 1
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
     steps:
