@@ -10,7 +10,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
@@ -23,7 +23,7 @@ jobs:
           files: ./coverage.out
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
@@ -49,7 +49,7 @@ jobs:
         run: ./bootstrap --version || echo "(no --version flag — not required)"
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4

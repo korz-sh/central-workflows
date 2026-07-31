@@ -2,6 +2,60 @@
 
 Reusable GitHub Actions workflows for all Korz services. Each service repo calls these via `workflow_call` — no duplicated pipeline logic.
 
+## Where jobs run (`KORZ_RUNNER_LABELS`)
+
+Test and lint jobs read their `runs-on` from an org variable:
+
+```yaml
+runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+```
+
+Unset, this is exactly `runs-on: ubuntu-latest`. Nothing changes.
+
+Set it to move every test/lint job across all repos to self-hosted runners in
+one place, with no PR:
+
+```bash
+gh variable set KORZ_RUNNER_LABELS --org korz-sh --body '["self-hosted","korz-dev"]'
+gh variable delete KORZ_RUNNER_LABELS --org korz-sh   # back to hosted
+```
+
+### Why this exists
+
+When the GitHub-hosted minutes quota is exhausted, every job dies in under four
+seconds without executing, annotated *"The job was not started because recent
+account payments have failed"*. Self-hosted runners are not billed and are not
+blocked by that.
+
+But you cannot get there just by registering a runner. **`ubuntu-latest` is a
+reserved label.** Verified 2026-07-31: with a runner online and idle, labelled
+`self-hosted,Linux,X64,korz-dev,ubuntu-latest`, a job pinned to `ubuntu-latest`
+*still* failed on billing in 3s. GitHub routes that label to a hosted image
+before it looks at what is registered. The same commit, same exhausted quota,
+with `runs-on: [self-hosted, korz-dev]` ran on a laptop and passed.
+
+So the block is per-label, not per-account, and switching requires changing
+`runs-on`. This variable is what makes that one edit instead of 24.
+
+### Deploys stay hosted, on purpose
+
+`deploy-*`, `build-docker-ecr` and `publish-*` are deliberately **not** switchable.
+They assume the AWS/ECR/GHCR/Vercel role and ship to production. Saving CI minutes
+is not a good enough reason to let production deploys run on whatever machine is
+listening. If the quota is out, deploys wait.
+
+### It is not the same machine as `ubuntu-latest`
+
+A self-hosted runner has whatever toolchains are installed on it, not GitHub's
+~40 preinstalls. `make doctor` in korz-dev exists to show that gap (it found
+node 24 locally against CI's 20, pnpm 11 against 9.1.4). A pass here means *the
+workflow executed*, not *it would pass on GitHub's image*.
+
+Runners are ephemeral by default: `make runner-up REPO=x` serves one job and
+deregisters.
+
+---
+
 ## Workflows
 
 ### Build & Publish
