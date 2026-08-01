@@ -33,8 +33,20 @@ jobs:
       - run: dotnet restore
       # --no-restore: reuse the restore above instead of restoring implicitly again.
       - run: dotnet test --no-restore --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
+      # `dotnet tool install -g` FAILS when the tool is already installed
+      # ("La herramienta ... ya está instalada", exit 1), which aborts the step
+      # before reportgenerator ever runs. On a fresh ubuntu-latest image that
+      # never happens, so the bug was invisible; on any reused machine — a
+      # self-hosted runner, a warm container — the second run onwards fails.
+      #
+      # It fails AFTER the tests have passed, so the job reports red with a
+      # green test summary above it: it reads like a flaky test suite and is
+      # actually a missing idempotency check.
+      #
+      # `update` installs when absent and upgrades when present, which is what
+      # this step meant all along.
       - run: |
-          dotnet tool install -g dotnet-reportgenerator-globaltool
+          dotnet tool update -g dotnet-reportgenerator-globaltool
           reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"Cobertura;JsonSummary;Html"
       - uses: actions/upload-artifact@v4
         if: always()
