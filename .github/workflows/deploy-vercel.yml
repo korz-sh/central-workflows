@@ -42,7 +42,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.environment == 'production' && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     outputs:
       deployment-url: ${{ steps.deploy.outputs.deployment-url }}
 
