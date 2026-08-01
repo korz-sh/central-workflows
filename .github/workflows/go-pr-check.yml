@@ -71,6 +71,11 @@ jobs:
       #
       # So pin a v2 release explicitly. Renovate can move this; "latest" cannot,
       # because it does not mean what it looks like it means.
-      - uses: golangci/golangci-lint-action@v6
+      # v7 is the first action release that accepts golangci-lint v2. v6 rejects
+      # it outright:
+      #
+      #   invalid version string 'v2.12.2', golangci-lint v2 is not supported
+      #   by golangci-lint-action v6, you must update to golangci-lint-action v7
+      - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
