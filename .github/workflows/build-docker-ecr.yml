@@ -37,7 +37,30 @@ on:
         value: ${{ jobs.build-and-push.outputs.image-tag }}
 
 jobs:
+  # Only on `push`. A PR CANNOT run this, and must not.
+  #
+  # This job assumes an AWS role via OIDC, and the trust policy allows
+  # `repo:korz-sh/*:ref:refs/heads/*` — branch pushes only, so a PR from a fork
+  # or an untrusted branch cannot mint credentials. That restriction is correct
+  # and deliberate.
+  #
+  # But a `pull_request` run has a different `sub` claim, so it is REJECTED with
+  # "Not authorized to perform sts:AssumeRoleWithWebIdentity". Every PR in every
+  # repo calling this workflow therefore showed a red check that could never be
+  # green — for a reason that has nothing to do with the code under review.
+  #
+  # That is worse than useless. agent-platform-api already hit this (KOR-67):
+  # the permanent red trained everyone to merge with --admin, which then masked
+  # a real failure (KOR-60 F5). A check that always fails teaches people to
+  # ignore checks.
+  #
+  # So: PRs run their repo's test/lint gate, and the image ships on merge. Safe
+  # to skip on PRs because no caller consumes this job's outputs from a PR run —
+  # verified across all six callers (entitlement-api, identity-api-v2,
+  # korz-query-api, payments-service-api, rbac-api, web-api): none chain a
+  # `needs:` on it.
   build-and-push:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
