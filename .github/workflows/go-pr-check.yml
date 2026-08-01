@@ -55,6 +55,17 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: ${{ inputs.go-version }}
-      - uses: golangci/golangci-lint-action@v3
+      # v3 pins golangci-lint 1.64.8, which is BUILT with Go 1.24 and refuses to
+      # analyse a module targeting a newer language version:
+      #
+      #   can't load config: the Go language version (go1.24) used to build
+      #   golangci-lint is lower than the targeted Go version (1.25.0)
+      #
+      # identity-api-v2's go.mod declares 1.25.0, so its lint job could not have
+      # passed under v3 no matter what the code looked like. `version: latest`
+      # does not help: the ACTION decides which release it can install.
+      #
+      # v6 ships golangci-lint v2, built against a current toolchain.
+      - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
