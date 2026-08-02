@@ -30,6 +30,35 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
+      # GitHub Packages requires auth even to READ, and Korz.Shared.Contracts
+      # lives there. Without this, `dotnet restore` fails with NU1101 ("no
+      # packages exist with this id") for any consumer that does not vendor a
+      # .nupkg into the repo -- which is why entitlement-api's CI had 0
+      # successes in its last 30 runs.
+      #
+      # Guarded on the file existing, so repos that vendor their packages
+      # (web-api, rbac-api) are untouched. GITHUB_TOKEN is read-only for
+      # packages, which is exactly the access needed here.
+      - name: Authenticate to GitHub Packages, if this repo uses it
+        env:
+          # GH_PAT first: the automatic GITHUB_TOKEN is scoped to the RUNNING
+          # repo, and the package lives in shared-contracts, so cross-repo reads
+          # need a PAT. GITHUB_TOKEN is kept as a fallback because it does work
+          # when the package and the workflow share a repo, and because failing
+          # to authenticate is better diagnosed by the restore below than by a
+          # missing-secret error here.
+          TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          if ! grep -q "nuget.pkg.github.com" nuget.config 2>/dev/null; then
+            echo "no GitHub Packages source in nuget.config, nothing to do"
+            exit 0
+          fi
+          dotnet nuget update source github \
+            --username x-access-token \
+            --password "$TOKEN" \
+            --store-password-in-clear-text
+          echo "authenticated to GitHub Packages"
+
       - run: dotnet restore
       # --no-restore: reuse the restore above instead of restoring implicitly again.
       - run: dotnet test --no-restore --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
