@@ -1,0 +1,95 @@
+# The gate for the repo that gates everything else.
+#
+# central-workflows had NO workflow of its own. Every file here is
+# `workflow_call` only, so nothing ran on a PR and nothing ran on a push: a
+# malformed YAML, a swallowed exit code, or a typo'd action ref could be merged
+# with a green (empty) status and would then break the CI of all six consuming
+# repos at once -- web-api, rbac-api, identity-api-v2, entitlement-api,
+# korz-query-api, payments-service-api.
+#
+# All of them call these workflows at @main, so main IS the release channel.
+# There is no staging step between a merge here and everyone else's CI.
+name: PR Check
+
+on:
+  pull_request:
+    branches: ['**']   # stacked PRs included (KOR-159)
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Every workflow must parse. A YAML error here is invisible until it
+      #    reaches a consumer, because a reusable workflow is never run in place.
+      - name: Every workflow is valid YAML
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              try:
+                  d = yaml.safe_load(open(f))
+              except Exception as e:
+                  bad.append((f, str(e).splitlines()[0]))
+                  continue
+              if not isinstance(d, dict) or "jobs" not in d:
+                  bad.append((f, "no jobs block"))
+                  continue
+              print(f"  ok  {f}  jobs={list(d['jobs'])}")
+          if bad:
+              print("\nINVALID:")
+              for f, e in bad:
+                  print(f"  {f}: {e}")
+              sys.exit(1)
+          PY
+
+      # 2. No check may swallow its exit code. This is the defect that started
+      #    the audit: `dotnet test ... || echo "No tests found"` reported a
+      #    green tick for a suite that never ran, and every repo calling it
+      #    inherited that lie.
+      #
+      #    Use `continue-on-error: true` for a genuinely optional step. It keeps
+      #    the real exit code and shows the step as failed without failing the
+      #    job, so the reader can still tell what happened.
+      - name: No check swallows its exit code
+        run: |
+          # A command substitution supplying a default -- VAR=$(... || echo "")
+          # -- asserts nothing and is excluded; everything else is a gate.
+          hits=$(grep -rn -E '^\s*(-\s*)?run:.*\|\|\s*echo' .github/workflows/ \
+                 | grep -vE '^[^:]+:[0-9]+:\s*[A-Za-z_][A-Za-z0-9_]*=\$\(' || true)
+          if [ -n "$hits" ]; then
+            echo "These steps can never fail:"
+            echo "$hits"
+            echo
+            echo "Use 'continue-on-error: true' if the step is genuinely optional."
+            exit 1
+          fi
+          echo "no swallowed exit codes"
+
+      # 3. Reusable workflows are the blast radius, so their inputs and secrets
+      #    are a contract. A workflow_call file with neither is usually a file
+      #    that was edited without thinking about its callers.
+      - name: Every reusable workflow declares its interface
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(f))
+              on = d.get(True) or d.get("on") or {}
+              if "workflow_call" not in on:
+                  continue
+              call = on["workflow_call"] or {}
+              if not call.get("inputs") and not call.get("secrets"):
+                  bad.append(f)
+          for f in bad:
+              print(f"  {f}: workflow_call with no inputs and no secrets")
+          sys.exit(1 if bad else 0)
+          PY
