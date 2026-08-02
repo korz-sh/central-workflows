@@ -14,8 +14,12 @@ on:
       coverage-json-path:
         required: false
         type: string
-        default: 'coverage/coverage.json'
-        description: 'Path to reportgenerator Json output'
+        # reportgenerator's JsonSummary reporter writes Summary.json, not
+        # coverage.json. The old default pointed at a file that is never
+        # created, and the reader below silently substituted 0 -- so every
+        # consumer published "0% coverage" while actually sitting at 44.5%.
+        default: 'coverage/Summary.json'
+        description: 'Path to reportgenerator JsonSummary output'
 
 jobs:
   # KOR-54: the `validate` job (restore + build) was dropped. It duplicated the compile
@@ -119,10 +123,31 @@ jobs:
       - name: Extract coverage percentage
         id: coverage
         run: |
-          if [ -f "${{ inputs.coverage-json-path }}" ]; then
-            COVERAGE=$(jq '.total.lines.pct' "${{ inputs.coverage-json-path }}")
-          else
-            COVERAGE="0"
+          # Two bugs lived here, and both reported a plausible number instead of
+          # an error:
+          #
+          #   1. the path defaulted to coverage/coverage.json, which
+          #      reportgenerator never writes (it writes Summary.json)
+          #   2. the jq path was .total.lines.pct, which does not exist in that
+          #      file either -- the field is .summary.linecoverage
+          #
+          # Either one alone produced "0" via the else branch, so the badge said
+          # 0% for a service at 44.5% and nobody could tell the difference
+          # between "no coverage" and "no file".
+          #
+          # Now a missing file is an explicit, visible 'unknown' rather than a
+          # number that looks measured.
+          FILE="${{ inputs.coverage-json-path }}"
+          if [ ! -f "$FILE" ]; then
+            echo "::warning::coverage summary not found at $FILE — reporting unknown, not 0"
+            echo "percentage=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          COVERAGE=$(jq -r '.summary.linecoverage // empty' "$FILE")
+          if [ -z "$COVERAGE" ]; then
+            echo "::warning::$FILE has no .summary.linecoverage — reporting unknown"
+            COVERAGE="unknown"
           fi
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
           echo "Coverage: $COVERAGE%"
