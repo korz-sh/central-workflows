@@ -74,8 +74,28 @@ jobs:
       #
       # `update` installs when absent and upgrades when present, which is what
       # this step meant all along.
-      - run: |
-          dotnet tool update -g dotnet-reportgenerator-globaltool
+      # `update` was supposed to be the idempotent form of `install`, and it is
+      # not: on a reused runner where the tool is already current it prints
+      # "ya está instalada" and exits 1. Observed in CI (exit 1) but NOT locally
+      # (exit 0), so the behaviour depends on how the tool was installed, which
+      # makes it exactly the kind of thing not to encode an assumption about.
+      #
+      # It failed AFTER the tests passed, so the job went red under a green
+      # "95/95" summary: it reads like a flaky suite and is a missing
+      # idempotency check.
+      #
+      # continue-on-error rather than `|| true`, deliberately: the real exit
+      # code survives and the step shows as failed if something genuinely broke,
+      # instead of being rewritten to 0 and telling the reader nothing. The
+      # assertion that matters is the reportgenerator step below, which is a
+      # separate step whose exit code IS honoured.
+      - name: Install the coverage tool, if missing
+        continue-on-error: true
+        run: dotnet tool install -g dotnet-reportgenerator-globaltool
+
+      - name: Coverage report
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
           reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"Cobertura;JsonSummary;Html"
       - uses: actions/upload-artifact@v4
         if: always()
