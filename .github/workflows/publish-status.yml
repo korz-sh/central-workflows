@@ -16,8 +16,14 @@ on:
         type: string
         description: 'Source workflow run ID'
     secrets:
-      GITHUB_TOKEN:
+      # NOT `GITHUB_TOKEN`. That name is RESERVED -- GitHub injects the token
+      # automatically, and a workflow_call that declares it is rejected at
+      # startup: 0 jobs, 0 seconds, every push, 0 successes ever. Callers pass
+      # `secrets: inherit`, and a cross-repo checkout needs a PAT anyway, since
+      # the automatic token is scoped to THIS repo and cannot write korz-status.
+      KORZ_STATUS_TOKEN:
         required: true
+        description: 'PAT with write access to korz-sh/korz-status'
 
 jobs:
   publish:
@@ -31,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: korz-sh/korz-status
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.KORZ_STATUS_TOKEN }}
           path: korz-status
 
       - name: Create/Update service coverage report

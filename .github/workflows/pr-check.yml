@@ -99,7 +99,31 @@ jobs:
           print("no step calls a reusable workflow")
           PY
 
-      # 4. Reusable workflows are the blast radius, so their inputs and secrets
+      # 4. `GITHUB_TOKEN` is a RESERVED secret name. GitHub injects it, so a
+      #    workflow_call that DECLARES it is rejected before any job starts --
+      #    which is how publish-status.yml accumulated 0 successes over its
+      #    entire life while looking perfectly reasonable in the editor.
+      - name: No workflow declares a reserved secret name
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(f)) or {}
+              on = d.get(True) or d.get("on") or {}
+              for name in ((on.get("workflow_call") or {}).get("secrets") or {}):
+                  if name.upper() == "GITHUB_TOKEN":
+                      bad.append(f"{f}: declares reserved secret '{name}'")
+          for b in bad:
+              print("  " + b)
+          if bad:
+              print("\nGITHUB_TOKEN is provided automatically. For cross-repo")
+              print("access use a differently named PAT secret.")
+              sys.exit(1)
+          print("no reserved secret names")
+          PY
+
+      # 5. Reusable workflows are the blast radius, so their inputs and secrets
       #    are a contract. A workflow_call file with neither is usually a file
       #    that was edited without thinking about its callers.
       - name: Every reusable workflow declares its interface
