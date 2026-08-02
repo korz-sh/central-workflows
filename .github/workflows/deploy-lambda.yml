@@ -31,8 +31,29 @@ on:
       prod-branch:
         required: false
         type: string
-        default: 'main'
-        description: 'Branch that triggers prod deploy. Set to empty string to disable prod deploy.'
+        # Production is OPT-IN. This defaulted to 'main', and every consumer's
+        # default branch IS main, so every merge attempted a production deploy
+        # that nobody asked for.
+        #
+        # It never worked, and the way it failed is the point. entitlement-api's
+        # prod job assumed a role named github-actions-korz-STAGING and targeted
+        # `entitlement_api` -- the SAME function the staging job writes. It only
+        # failed because that role lacks lambda:UpdateFunctionCode. With the
+        # permission, a "prod deploy" would have silently overwritten staging and
+        # reported success.
+        #
+        # Five of the six consumers still have LAMBDA_FUNCTION_PROD identical to
+        # LAMBDA_FUNCTION_STAGING, so this is not one repo's misconfiguration.
+        #
+        # Checked before changing it: across all six consumers, 143 deploy-prod
+        # jobs have run and ZERO have ever succeeded. Nothing depends on the old
+        # default, so this removes a hazard without stopping a real deployment.
+        #
+        # To deploy to production, pass `prod-branch: main` explicitly -- and
+        # make sure AWS_ROLE_ARN_PROD and LAMBDA_FUNCTION_PROD actually name
+        # production first.
+        default: ''
+        description: 'Branch that triggers prod deploy. Empty (default) disables it; set explicitly to opt in.'
       aws-region-staging:
         required: false
         type: string
