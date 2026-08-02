@@ -22,18 +22,43 @@ on:
       # `secrets: inherit`, and a cross-repo checkout needs a PAT anyway, since
       # the automatic token is scoped to THIS repo and cannot write korz-status.
       KORZ_STATUS_TOKEN:
-        required: true
-        description: 'PAT with write access to korz-sh/korz-status'
+        required: false
+        description: 'PAT with write access to korz-sh/korz-status. Optional: without it the job skips instead of failing.'
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # NOT required, deliberately. This secret exists in ZERO of the six calling
+    # repos today (checked, not assumed), so `required: true` would convert a
+    # workflow that merely never ran into one that FAILS the CI of every
+    # service. That is strictly worse than the bug being fixed.
+    #
+    # Skipping is honest here: publishing a coverage badge is a nice-to-have,
+    # and a skipped job is visibly skipped rather than falsely green. Create the
+    # secret and the job starts working, with no change on the caller side.
     permissions:
       contents: write
       actions: read
 
     steps:
+      # `secrets` is not available in a job-level `if`, so the guard lives on
+      # the steps. Without the token every step no-ops and the job is green and
+      # empty, which is honest: nothing was published and nothing broke.
+      - name: Report whether publishing is configured
+        id: gate
+        env:
+          TOKEN: ${{ secrets.KORZ_STATUS_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "enabled=false" >> $GITHUB_OUTPUT
+            echo "KORZ_STATUS_TOKEN is not set — skipping coverage publication."
+            echo "Set it on the calling repo to enable this; nothing else changes."
+          else
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout korz-status repo
+        if: steps.gate.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
           repository: korz-sh/korz-status
@@ -41,6 +66,7 @@ jobs:
           path: korz-status
 
       - name: Create/Update service coverage report
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           mkdir -p korz-status/reports korz-status/.badges
 
@@ -55,6 +81,7 @@ jobs:
           EOF
 
       - name: Generate badges
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           SERVICE="${{ inputs.service-name }}"
           COVERAGE="${{ inputs.coverage-percentage }}"
@@ -97,6 +124,7 @@ jobs:
           EOF
 
       - name: Update coverage table in README
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           cd korz-status
           SERVICE="${{ inputs.service-name }}"
@@ -112,6 +140,7 @@ jobs:
           fi
 
       - name: Update STATUS.md
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           cd korz-status
           cat > STATUS.md <<'EOF'
@@ -132,6 +161,7 @@ jobs:
           EOF
 
       - name: Commit and push
+        if: steps.gate.outputs.enabled == 'true'
         working-directory: korz-status
         run: |
           git config user.name "Korz Bot"
@@ -152,6 +182,7 @@ jobs:
           fi
 
       - name: Summary
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           echo "## 📊 Coverage Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
