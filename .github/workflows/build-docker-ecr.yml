@@ -60,7 +60,18 @@ jobs:
   # korz-query-api, payments-service-api, rbac-api, web-api): none chain a
   # `needs:` on it.
   build-and-push:
-    if: github.event_name == 'push'
+    # Skip on PRs (no caller chains a `needs:` on this job from a PR run), but
+    # NOT on workflow_dispatch. The gate used to be `== 'push'` alone, which
+    # made every caller's "Run workflow" button accept the click and then skip
+    # the only job -- a button that lies.
+    #
+    # That is not a cosmetic bug: build.yml also filters on `paths: src/**`, so
+    # a change to a Dockerfile, a workflow or config produces no image, and with
+    # the dispatch button dead the ONLY way to ship one is to touch a file under
+    # src/. Hence 48 `chore: trigger build` commits across 7 repos in 6 months,
+    # two of them mine today. The workaround was that common because the button
+    # never worked.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       contents: write
