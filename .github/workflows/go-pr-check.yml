@@ -45,8 +45,19 @@ jobs:
         run: |
           test -x bootstrap
           file bootstrap
+      # `continue-on-error` rather than `|| echo`, which looks equivalent and
+      # is not. `|| echo` REWRITES the exit code to 0, so the step is green
+      # whether the binary printed a version or segfaulted, and no reader can
+      # tell the difference. continue-on-error keeps the real exit code, shows
+      # the step as failed in the UI, and simply does not fail the job.
+      #
+      # It also means the repo holds no line that swallows an exit code, so the
+      # drift detector needs no exception. A detector with exceptions is one
+      # nobody trusts, and this rule exists because `dotnet test || echo "No
+      # tests found"` hid a broken suite behind a green tick.
       - name: Version banner, if the binary offers one
-        run: ./bootstrap --version || echo "(no --version flag — not required)"
+        continue-on-error: true
+        run: ./bootstrap --version
 
   lint:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
