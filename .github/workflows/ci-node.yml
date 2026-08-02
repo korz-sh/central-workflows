@@ -82,6 +82,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
+    outputs:
+      # Exposed so the publish-status job below can read it. It used to be
+      # consumed by a step in this same job, which is why it was never an output.
+      percentage: ${{ steps.coverage.outputs.percentage }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -100,12 +104,21 @@ jobs:
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
           echo "Coverage: $COVERAGE%"
 
-      - name: Publish coverage to korz-status
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-        uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
-        with:
-          service-name: ${{ inputs.service-name }}
-          coverage-percentage: ${{ steps.coverage.outputs.percentage }}
-          run-id: ${{ github.run_id }}
-        secrets:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # A reusable WORKFLOW can only be called from a job, never from a step. This
+  # lived inside `coverage` as a step, which makes the whole file invalid: the
+  # run died at startup with 0 jobs, in 0 seconds, on every push since the file
+  # was written -- 0 successes in the last 40 runs. Nothing consumed it on push,
+  # so the red never reached anyone, and the repo had no gate of its own to say
+  # otherwise.
+  #
+  # As its own job with `needs: coverage`, it is a legal workflow call and the
+  # coverage number still flows through via job outputs.
+  publish-status:
+    needs: coverage
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      coverage-percentage: ${{ needs.coverage.outputs.percentage }}
+      run-id: ${{ github.run_id }}
+    secrets: inherit

@@ -73,7 +73,33 @@ jobs:
           fi
           echo "no swallowed exit codes"
 
-      # 3. Reusable workflows are the blast radius, so their inputs and secrets
+      # 3. A reusable WORKFLOW can only be called from a job, never from a
+      #    step. ci-go.yml and ci-node.yml both had `uses: .../publish-status.yml`
+      #    inside a step, which makes the entire file invalid: the run died at
+      #    startup with 0 jobs in 0 seconds, on EVERY push, 0 successes in 40
+      #    runs -- and nobody saw it, because nothing consumes these on push and
+      #    the repo had no gate of its own.
+      - name: No step calls a reusable workflow
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(f)) or {}
+              for jn, j in (d.get("jobs") or {}).items():
+                  for st in (j.get("steps") or []):
+                      u = st.get("uses", "")
+                      if "/.github/workflows/" in u:
+                          bad.append(f"{f}: job '{jn}' step '{st.get('name')}' uses {u}")
+          for b in bad:
+              print("  " + b)
+          if bad:
+              print("\nA reusable workflow is called from a JOB (`jobs.x.uses`), not a step.")
+              sys.exit(1)
+          print("no step calls a reusable workflow")
+          PY
+
+      # 4. Reusable workflows are the blast radius, so their inputs and secrets
       #    are a contract. A workflow_call file with neither is usually a file
       #    that was edited without thinking about its callers.
       - name: Every reusable workflow declares its interface
