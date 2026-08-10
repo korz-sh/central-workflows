@@ -20,6 +20,19 @@ on:
         # consumer published "0% coverage" while actually sitting at 44.5%.
         default: 'coverage/Summary.json'
         description: 'Path to reportgenerator JsonSummary output'
+    secrets:
+      # Declared so callers can pass THIS ONE secret instead of `secrets:
+      # inherit` (KOR-251). `inherit` hands the reusable every secret the
+      # calling repo holds — AWS role ARNs, tokens, everything — to run a job
+      # that needs exactly one, and it does it across a `@main` reference,
+      # which is a moving target.
+      #
+      # Optional, because the workflow already falls back to the automatic
+      # GITHUB_TOKEN. That fallback is why the restore only fails on repos
+      # that actually consume the private NuGet feed.
+      GH_PAT:
+        required: false
+        description: 'Reads the private NuGet feed; falls back to GITHUB_TOKEN'
 
 jobs:
   # KOR-54: the `validate` job (restore + build) was dropped. It duplicated the compile
