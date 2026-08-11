@@ -1,0 +1,84 @@
+name: Security
+
+# El gate de seguridad sobre NUESTRO propio codigo (KOR-245).
+#
+# Los checkov/prowler que aparecen en otros workflows de la org son el producto — el
+# motor que escanea a los clientes — no un gate sobre korz. Antes de este archivo habia
+# 33 workflows en 11 repos y ninguno miraba nuestro codigo.
+#
+# Inline a proposito: los reusables de korz-sh/central-workflows fallan con
+# startup_failure en esta org.
+#
+# `pull_request` sin filtro de `branches`: las ramas por defecto no son uniformes entre
+# repos (unas main, otras master) y un filtro equivocado deja el workflow sin correr
+# nunca — que en la UI se ve idéntico a un workflow verde.
+on:
+  pull_request:
+  push:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep:1.172.0
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deuda ya ticketeada, excluida con el ticket escrito. Todo lo demas bloquea.
+      #   yaml.github-actions.security.run-shell-injection.run-shell-injection  ->  KOR-264
+      #   yaml.github-actions.security.secrets-inherit.secrets-inherit  ->  KOR-264
+      #
+      # Salida de texto a proposito, sin --quiet ni --json: el resumen imprime
+      # "Parsed lines", "Targets scanned" y los archivos salteados. Un scan que no pudo
+      # parsear media base de codigo sale verde igual, y sin ese resumen la caida de
+      # cobertura seria invisible.
+      #
+      # --severity ERROR: solo lo de alta confianza. Subir a WARNING cuando ERROR este
+      # sostenidamente en cero, no antes — un gate que grita por todo se apaga.
+      #
+      # --error hace que el exit code sea el gate: sin `|| true`, sin `continue-on-error`
+      # (KOR-155).
+      - name: semgrep scan
+        run: |
+          semgrep scan \
+            --config p/default \
+            --config p/secrets \
+            --severity ERROR \
+            --error \
+            --metrics off \
+            --exclude-rule yaml.github-actions.security.run-shell-injection.run-shell-injection \
+            --exclude-rule yaml.github-actions.security.secrets-inherit.secrets-inherit
+
+  supply-chain:
+    name: supply-chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pineada por SHA, no por tag: un tag es mutable y esta action corre con acceso al
+      # checkout. a9c7b0f = v0.36.0.
+      #
+      # La deuda preexistente se declara en .trivyignore, versionado y con fecha de
+      # expiracion; trivy lo lee del root por su cuenta. Bajarle la severidad al gate
+      # esconderia la deuda, un ignore fechado la deja escrita.
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          # Sin parche disponible no hay accion posible dentro de un PR; eso se revisa en
+          # la barrida, no bloqueando a quien pasaba por aca.
+          ignore-unfixed: true
+          exit-code: '1'
+        env:
+          # La DB de trivy vive en ghcr y el rate limit anonimo la tumba a mitad de manana.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
