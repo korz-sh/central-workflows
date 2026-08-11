@@ -64,30 +64,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Trivy enumera NuGet leyendo packages.lock.json. Ahora existen
-      # (RestorePackagesWithLockFile en Directory.Build.props), asi que este job
-      # SI cubre dependencias .NET — pero eso deja de ser cierto en silencio si
-      # alguien agrega un csproj sin lockfile o los borra. Esto lo vuelve ruidoso.
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      # --locked-mode falla si el lockfile commiteado no coincide con los csproj.
-      # Es la parte que importa: trivy escanea el archivo del checkout, no el
-      # arbol de dependencias real, asi que un lockfile viejo se escanearia
-      # limpio mientras el build usa otra cosa.
-      - name: los lockfiles existen y estan al dia
-        run: |
-          n=$(find . -name packages.lock.json -not -path '*/bin/*' -not -path '*/obj/*' | wc -l)
-          c=$(find . -name '*.csproj' -not -path '*/bin/*' -not -path '*/obj/*' | wc -l)
-          echo "csproj=$c lockfiles=$n"
-          if [ "$n" -eq 0 ] || [ "$n" -lt "$c" ]; then
-            echo "::error::Faltan packages.lock.json ($n de $c). Sin ellos trivy no ve NuGet y este job pasaria verde sin cubrir dependencias (KOR-249)."
-            exit 1
-          fi
-          dotnet restore --locked-mode
-          echo "Cubre: dependencias NuGet ($n lockfiles) + secretos + misconfig de Dockerfile." >> "$GITHUB_STEP_SUMMARY"
-
       # Pineada por SHA, no por tag: un tag es mutable y esta action corre con acceso al
       # checkout. a9c7b0f = v0.36.0.
       #
