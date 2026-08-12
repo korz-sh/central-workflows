@@ -28,7 +28,14 @@ concurrency:
 jobs:
   sast:
     name: sast
-    runs-on: ubuntu-latest
+    # Follows the runner switch like the CI reusables do (KOR-320). Pinned to
+    # ubuntu-latest, these two jobs kept dying on the exhausted hosted quota
+    # while everything else ran on a self-hosted runner — and the org ruleset
+    # "korz security gate" makes them REQUIRED, so the org's merges were blocked
+    # by the only checks that could not move. Both run their tool in a container
+    # (semgrep here, trivy-action below), so docker is the only host requirement
+    # and a self-hosted runner has it.
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     container: semgrep/semgrep:1.172.0
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +67,7 @@ jobs:
 
   supply-chain:
     name: supply-chain
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
 
