@@ -23,11 +23,21 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      # v5, not v4: v4 does not cache the module and build caches, so every job
-      # in this file re-downloaded the whole module graph on every run (KOR-53).
+      # v5 for the maintained action, but with its caching OFF.
+      #
+      # v5 caches by default, and that default is actively harmful here:
+      # actions/cache restores with `tar -P` into the workspace and took the
+      # checkout with it in ci-dotnet, leaving `dotnet restore` with no project
+      # file (see the full note in ci-dotnet.yml). Go's module cache would be
+      # restored the same way.
+      #
+      # Nothing is lost: every consumer runs on a PERSISTENT self-hosted runner
+      # (KOR-320), so ~/go/pkg/mod is already warm between jobs. actions/cache
+      # solves a problem that only exists on ephemeral hosted runners.
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
+          cache: false
       - run: go mod download
       - run: go vet ./...
       - run: go build ./cmd/...
@@ -73,9 +83,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # cache: false — actions/cache restores with `tar -P` into the workspace
+      # and ate the checkout in ci-dotnet (see the note there). Go’s module
+      # cache is already warm between jobs on a persistent self-hosted runner.
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
+          cache: false
       - run: go test -v -race -coverprofile=coverage.out ./...
       # Kept from go-pr-check's `test` job, which is deleted in this change: it
       # was the only place coverage reached codecov, and dropping it here would
@@ -102,9 +116,13 @@ jobs:
       percentage: ${{ steps.coverage.outputs.percentage }}
     steps:
       - uses: actions/checkout@v4
+      # cache: false — actions/cache restores with `tar -P` into the workspace
+      # and ate the checkout in ci-dotnet (see the note there). Go’s module
+      # cache is already warm between jobs on a persistent self-hosted runner.
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
+          cache: false
       - uses: actions/download-artifact@v4
         with:
           name: coverage-go-${{ inputs.service-name }}
