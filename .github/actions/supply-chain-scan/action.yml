@@ -50,10 +50,11 @@ runs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
-        # KOR-53: the NuGet restore below was uncached in every copy of this job.
-        # The lockfiles the check itself insists on are exactly the cache key.
-        cache: true
-        cache-dependency-path: '**/packages.lock.json'
+        # No `cache: true`. It was tried and it broke ci-dotnet's restore: the
+        # cache is restored with `tar -P` into the workspace and took the
+        # checkout with it (MSB1003, "no project or solution file"). See the
+        # long note in ci-dotnet.yml. On the persistent self-hosted runners this
+        # org uses, ~/.nuget/packages is already warm between jobs anyway.
 
     # --locked-mode fails when the committed lockfile does not match the csproj
     # files. That is the part that matters: trivy scans the file in the checkout,

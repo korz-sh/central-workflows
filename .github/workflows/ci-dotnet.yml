@@ -50,12 +50,27 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
-          # KOR-53: the restore below was uncached, in every job, in every run.
-          # Safe to key on the lockfiles: all three consumers (web-api,
-          # rbac-api, entitlement-api) have one per csproj, and their security
-          # gate already fails when that stops being true (KOR-249).
-          cache: true
-          cache-dependency-path: '**/packages.lock.json'
+          # NO `cache: true` here, deliberately, and it is not an oversight.
+          #
+          # It was added (KOR-53) and it broke the build. setup-dotnet's cache
+          # restores the NuGet folder with `tar -P` -- absolute paths -- into
+          # the workspace:
+          #
+          #   Cache Size: ~691 MB
+          #   tar -xf cache.tzst -P -C .../_work/entitlement-api/entitlement-api
+          #   Cache restored successfully
+          #   Run dotnet restore
+          #   MSBUILD : error MSB1003: Specify a project or solution file.
+          #
+          # The checkout was gone by the time restore ran. entitlement-api does
+          # have entitlement-api.sln at its root, and this job was green on main
+          # the day before, so the cache restore is what removed it.
+          #
+          # The deeper reason not to reach for it again: every consumer of this
+          # workflow runs on a PERSISTENT self-hosted runner (KOR-320), where
+          # ~/.nuget/packages already survives between jobs. actions/cache is
+          # solving a problem that only exists on ephemeral hosted runners, and
+          # charging a 691 MB untar over the working directory for it.
       # GitHub Packages requires auth even to READ, and Korz.Shared.Contracts
       # lives there. Without this, `dotnet restore` fails with NU1101 ("no
       # packages exist with this id") for any consumer that does not vendor a
