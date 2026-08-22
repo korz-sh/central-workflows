@@ -40,6 +40,7 @@ jobs:
       contents: write
       actions: read
 
+    timeout-minutes: 15
     steps:
       # `secrets` is not available in a job-level `if`, so the guard lives on
       # the steps. Without the token every step no-ops and the job is green and

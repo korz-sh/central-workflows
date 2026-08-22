@@ -1,0 +1,80 @@
+name: Semgrep scan
+description: >
+  The org's SAST gate over our own code (KOR-245), as a composite action so the
+  13 copies of security.yml stop drifting.
+
+# A composite action, NOT a reusable workflow, and that is not a style choice.
+#
+# The org ruleset "korz security gate" (id 20664553) requires the contexts
+# `sast` and `supply-chain` by exact name. A reusable workflow renames its checks
+# to `<caller-job-id> / <job-name>` -- `security / sast` -- so the required
+# contexts would never report again. Every PR in the org would block, starting
+# with the PR that made the change. A composite action runs inside the caller's
+# own job, so the check name stays `sast` and no ruleset edit is needed.
+#
+# The job-level `container:` stays in the caller: a composite action cannot
+# declare one.
+
+inputs:
+  lang:
+    description: >
+      Extra semgrep ruleset for this repo's language, without the `p/` prefix
+      (csharp, golang, python, terraform, typescript). Empty means
+      default+secrets only, which is what central-workflows itself runs.
+    required: false
+    default: ''
+  exclude-rules:
+    description: >
+      Whitespace-separated semgrep rule ids to exclude. Ticketed debt only: the
+      rule id goes here, the ticket number goes in a comment next to it in the
+      caller.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Text output on purpose -- no --quiet, no --json. The summary prints
+    # "Parsed lines", "Targets scanned" and the skipped files. A scan that failed
+    # to parse half the codebase still exits green, and without that summary the
+    # coverage drop is invisible.
+    #
+    # --severity ERROR: high-confidence only. Raise to WARNING when ERROR has
+    # been sustainably at zero, not before -- a gate that shouts about
+    # everything gets turned off.
+    #
+    # --error makes the exit code the gate: no `|| true`, no
+    # `continue-on-error` (KOR-155).
+    #
+    # Inputs arrive through env, not through `${{ }}` inside `run`.
+    # Interpolating them into the script is the injection pattern semgrep itself
+    # flags (yaml.github-actions.security.run-shell-injection), and this file is
+    # the one place in the org that must not trip its own gate.
+    - name: semgrep scan
+      shell: bash
+      env:
+        LANG_PACK: ${{ inputs.lang }}
+        EXCLUDE_RULES: ${{ inputs.exclude-rules }}
+      run: |
+        set -euo pipefail
+
+        args=(--config p/default --config p/secrets)
+
+        # An `if`, not `[ -n ... ] && ...`: under `set -e` a false test is the
+        # last command on the line, so an empty LANG_PACK would exit 1 here and
+        # the scan would never run. That is exactly central-workflows' own case.
+        if [ -n "$LANG_PACK" ]; then
+          args+=(--config "p/$LANG_PACK")
+        fi
+
+        # Unquoted on purpose: word splitting is how a whitespace-separated list
+        # of rule ids becomes separate arguments. The value comes from a caller
+        # workflow file in the repo, which is as trusted as this file.
+        for rule in $EXCLUDE_RULES; do
+          args+=(--exclude-rule "$rule")
+        done
+
+        semgrep scan "${args[@]}" \
+          --severity ERROR \
+          --error \
+          --metrics off

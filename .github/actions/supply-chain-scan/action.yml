@@ -1,0 +1,106 @@
+name: Supply chain scan
+description: >
+  Trivy over the checkout -- dependencies, secrets and Dockerfile misconfig --
+  plus the optional .NET lockfile freshness gate.
+
+# Composite action for the same reason as semgrep-scan: the org ruleset requires
+# the context `supply-chain` by exact name, and a reusable workflow would rename
+# it to `<caller-job-id> / supply-chain`. See ../semgrep-scan/action.yml.
+
+inputs:
+  skip-dirs:
+    description: >
+      Comma-separated paths for trivy to skip (e.g. .terraspace-cache). Vendored
+      or generated trees only -- skipping source is how a gate goes quietly blind.
+    required: false
+    default: ''
+  dotnet-lockfile-check:
+    description: >
+      Verify every csproj has an up-to-date packages.lock.json before trivy runs.
+      Only meaningful in .NET repos, and required there: trivy enumerates NuGet by
+      reading the lockfile, so a missing one makes this job pass green while
+      covering no dependencies at all (KOR-249).
+    required: false
+    default: 'false'
+  dotnet-version:
+    description: SDK used by the lockfile check. Ignored unless the check is on.
+    required: false
+    default: '10.0.x'
+  extra-script:
+    description: >
+      Optional repo-specific supply-chain script, run after the lockfile check and
+      before trivy (e.g. entitlement-api's vendored-contracts drift check). Runs
+      with GH_TOKEN in the environment when the caller passes github-token.
+    required: false
+    default: ''
+  github-token:
+    description: Token for extra-script, when it reads another repo in the org.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Trivy enumerates NuGet by reading packages.lock.json. Where those exist
+    # (RestorePackagesWithLockFile in Directory.Build.props) this job really does
+    # cover .NET dependencies -- but that stops being true SILENTLY the moment
+    # someone adds a csproj without one, or deletes them. This makes it loud.
+    - name: Setup .NET for the lockfile check
+      if: inputs.dotnet-lockfile-check == 'true'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+        # KOR-53: the NuGet restore below was uncached in every copy of this job.
+        # The lockfiles the check itself insists on are exactly the cache key.
+        cache: true
+        cache-dependency-path: '**/packages.lock.json'
+
+    # --locked-mode fails when the committed lockfile does not match the csproj
+    # files. That is the part that matters: trivy scans the file in the checkout,
+    # not the real dependency tree, so a stale lockfile would scan clean while the
+    # build resolves something else.
+    - name: The lockfiles exist and are current
+      if: inputs.dotnet-lockfile-check == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        n=$(find . -name packages.lock.json -not -path '*/bin/*' -not -path '*/obj/*' | wc -l)
+        c=$(find . -name '*.csproj' -not -path '*/bin/*' -not -path '*/obj/*' | wc -l)
+        echo "csproj=$c lockfiles=$n"
+        if [ "$n" -eq 0 ] || [ "$n" -lt "$c" ]; then
+          echo "::error::Missing packages.lock.json ($n of $c). Without them trivy cannot see NuGet and this job would pass green covering no dependencies (KOR-249)."
+          exit 1
+        fi
+        dotnet restore --locked-mode
+        echo "Covers: NuGet dependencies ($n lockfiles) + secrets + Dockerfile misconfig." >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Repo-specific supply-chain check
+      if: inputs.extra-script != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EXTRA_SCRIPT: ${{ inputs.extra-script }}
+      run: |
+        set -euo pipefail
+        "$EXTRA_SCRIPT"
+
+    # Pinned by SHA, not by tag: a tag is mutable and this action runs with access
+    # to the checkout. a9c7b0f = v0.36.0.
+    #
+    # Pre-existing debt is declared in .trivyignore -- versioned, with an expiry
+    # date -- which trivy reads from the repo root on its own. Lowering the gate's
+    # severity would hide that debt; a dated ignore keeps it written down.
+    - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+      with:
+        scan-type: fs
+        scanners: vuln,secret,misconfig
+        severity: CRITICAL,HIGH
+        # With no patch available there is no action possible inside a PR; that
+        # gets handled in the sweep, not by blocking whoever was passing through.
+        ignore-unfixed: true
+        exit-code: '1'
+        skip-dirs: ${{ inputs.skip-dirs }}
+      env:
+        # The trivy DB lives on ghcr and the anonymous rate limit takes it down
+        # mid-morning.
+        TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db

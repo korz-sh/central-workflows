@@ -28,10 +28,23 @@ on:
         required: false
         type: boolean
         default: false
+      codecov-flag:
+        required: false
+        type: string
+        default: ''
+        # From node-pr-check.yml, which this workflow absorbs. The codecov
+        # upload lived only there, so folding that file in without this input
+        # would have dropped the upload silently.
+        description: 'Flag for the codecov upload'
 
 jobs:
+  # This job is what node-pr-check.yml's `build` job already did: install, lint,
+  # build. That file is deleted in this change -- its `test` job also duplicated
+  # the `test` job below, so every PR installed dependencies four times across
+  # four runners and ran the Jest suite twice.
   validate:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +67,7 @@ jobs:
 
   test:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +85,15 @@ jobs:
       - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm install' }}
       - run: ${{ inputs.package-manager == 'pnpm' && format('pnpm test -- --coverage --collectCoverageFrom="{0}"', inputs.coverage-glob) || format('npm test -- --coverage --collectCoverageFrom="{0}"', inputs.coverage-glob) }}
 
+      # Kept from node-pr-check.yml's `test` job: that was the only place
+      # coverage reached codecov, and folding the file in without this step
+      # would have removed the upload without anyone noticing.
+      - uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+          flags: ${{ inputs.codecov-flag }}
+          fail_ci_if_error: false
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -82,6 +105,7 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
+    timeout-minutes: 10
     outputs:
       # Exposed so the publish-status job below can read it. It used to be
       # consumed by a step in this same job, which is why it was never an output.
@@ -115,7 +139,9 @@ jobs:
   # coverage number still flows through via job outputs.
   publish-status:
     needs: coverage
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    # `master` instead of `develop`: default branches are split across the org
+    # and develop is gone, so this gate was matching a branch no consumer has.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
     with:
       service-name: ${{ inputs.service-name }}

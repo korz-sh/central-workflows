@@ -22,7 +22,22 @@ permissions:
 
 jobs:
   validate:
+    # Stays pinned to ubuntu-latest while everything else in the org moved to
+    # `vars.KORZ_RUNNER_LABELS` (KOR-320), deliberately.
+    #
+    # This job is the required status check on this repo's main, and this repo is
+    # the release channel for six others. Both runner strategies have a failure
+    # mode: pinned dies when the hosted quota is exhausted, switched QUEUES
+    # FOREVER when the variable names self-hosted labels with no runner
+    # registered -- which is the state the org is in right now, and which is
+    # indistinguishable from "about to start" (see korz-dev
+    # docs/ci-queued-for-hours.md). The observation in that runbook is that the
+    # hardcoded workflows were the ones that kept working.
+    #
+    # For the gate that has to be able to report in order for anything to merge,
+    # failing loudly beats waiting silently.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +58,29 @@ jobs:
                   bad.append((f, "no jobs block"))
                   continue
               print(f"  ok  {f}  jobs={list(d['jobs'])}")
+
+          # Composite actions are part of the blast radius now: the org's
+          # security gate calls .github/actions/{semgrep,supply-chain}-scan from
+          # all 13 repos, so a broken action.yml here breaks every one of them at
+          # once -- and the workflow glob above would never look at it.
+          for f in sorted(glob.glob(".github/actions/*/action.yml")):
+              try:
+                  d = yaml.safe_load(open(f))
+              except Exception as e:
+                  bad.append((f, str(e).splitlines()[0]))
+                  continue
+              if not isinstance(d, dict) or "runs" not in d:
+                  bad.append((f, "no runs block"))
+                  continue
+              steps = (d.get("runs") or {}).get("steps") or []
+              # `shell:` is required on every composite `run` step. Omitting it is
+              # accepted by the YAML parser and rejected at runtime, in every
+              # caller simultaneously.
+              for i, st in enumerate(steps, 1):
+                  if "run" in st and not st.get("shell"):
+                      bad.append((f, f"step {i} has `run` with no `shell`"))
+              print(f"  ok  {f}  inputs={list(d.get('inputs') or {})}")
+
           if bad:
               print("\nINVALID:")
               for f, e in bad:

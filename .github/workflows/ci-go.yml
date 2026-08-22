@@ -12,25 +12,77 @@ on:
         type: string
 
 jobs:
+  # This job absorbed go-pr-check.yml's `build` and `lint` jobs, which are
+  # deleted in this change. Those were two more runners, each doing its own
+  # checkout, its own setup-go and its own `go mod download`, to run steps that
+  # take seconds once the module cache is warm. go-pr-check's `test` job was a
+  # straight duplicate of the `test` job below, so every PR ran the Go suite
+  # twice -- with -race, the expensive way, both times.
   validate:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
+      # v5, not v4: v4 does not cache the module and build caches, so every job
+      # in this file re-downloaded the whole module graph on every run (KOR-53).
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
       - run: go mod download
       - run: go vet ./...
       - run: go build ./cmd/...
 
+      # From go-pr-check's `build`: the cross-compiled Lambda artifact. `go build
+      # ./cmd/...` above compiles, but it does not prove the bootstrap binary the
+      # Lambda actually runs can be produced.
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bootstrap ./cmd/server
+      # KOR-155 note: the `|| echo` this replaced was NOT the same defect as the
+      # swallowed test gates. `go build` above is the real check and its exit
+      # code is honoured; this only confirms the artifact exists and is
+      # executable, which is the part that must hold.
+      - name: The binary exists and is executable
+        run: |
+          test -x bootstrap
+          file bootstrap
+      # continue-on-error rather than `|| echo`, which looks equivalent and is
+      # not: `|| echo` rewrites the exit code to 0, so the step is green whether
+      # the binary printed a version or segfaulted. A Lambda bootstrap has no
+      # obligation to implement --version, so this is informational by design.
+      - name: Version banner, if the binary offers one
+        continue-on-error: true
+        run: ./bootstrap --version
+
+      # From go-pr-check's `lint`. golangci-lint 1.64.8 is BUILT with Go 1.24 and
+      # refuses to analyse a module targeting a newer language version:
+      #
+      #   can't load config: the Go language version (go1.24) used to build
+      #   golangci-lint is lower than the targeted Go version (1.25.0)
+      #
+      # identity-api-v2's go.mod declares 1.25.0, so its lint job could not pass
+      # no matter what the code looked like. `version: latest` does NOT fix it,
+      # and that is the trap: on both v3 and v6 of the action it still resolved
+      # to 1.64.8. v7 is the first action release that accepts golangci-lint v2.
+      # Renovate can move this pin; "latest" cannot, because it does not mean
+      # what it looks like it means.
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
   test:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
       - run: go test -v -race -coverprofile=coverage.out ./...
+      # Kept from go-pr-check's `test` job, which is deleted in this change: it
+      # was the only place coverage reached codecov, and dropping it here would
+      # have removed that signal silently.
+      - uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
       - run: go tool cover -html=coverage.out -o coverage.html
       - uses: actions/upload-artifact@v4
         if: always()
@@ -43,13 +95,14 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
+    timeout-minutes: 10
     outputs:
       # Exposed so the publish-status job below can read it. It used to be
       # consumed by a step in this same job, which is why it was never an output.
       percentage: ${{ steps.coverage.outputs.percentage }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
       - uses: actions/download-artifact@v4
@@ -78,7 +131,11 @@ jobs:
   # coverage number still flows through via job outputs.
   publish-status:
     needs: coverage
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    # `master` instead of `develop`: identity-api-v2, the only consumer of this
+    # workflow, has master as its default branch -- so this gate matched neither
+    # of its branches and the status was never published, while develop, which
+    # this repo does not have, was.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     uses: korz-sh/central-workflows/.github/workflows/publish-status.yml@main
     with:
       service-name: ${{ inputs.service-name }}

@@ -80,6 +80,7 @@ jobs:
       image-uri: ${{ steps.meta.outputs.image-uri }}
       image-tag: ${{ steps.meta.outputs.image-tag }}
 
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -105,17 +106,28 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "📦 Version: ${VERSION}"
 
-      - name: Build and push (with GitHub token build args)
-        if: ${{ inputs.pass-github-token-build-arg }}
+      # One step, not two. This used to be the same 15 lines duplicated under
+      # opposite `if:` guards, differing only in whether `build-args` was
+      # present -- so any fix to the tags, the cache scope or the provenance
+      # flag had to be made twice, and once was made in only one of them.
+      #
+      # An empty `build-args` is equivalent to omitting it, so the conditional
+      # collapses into the value instead of the step.
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ${{ inputs.dockerfile }}
           push: true
           provenance: false
+          # The conditional is on the VALUE, not on the step. A build arg a
+          # Dockerfile does not declare is a buildx warning, never an error, so
+          # passing an empty token to the images that do not need one is safe --
+          # and the callers that set this flag false are exactly the ones whose
+          # Dockerfile never reads it.
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
-            GITHUB_TOKEN=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN=${{ inputs.pass-github-token-build-arg && (secrets.GH_PAT || secrets.GITHUB_TOKEN) || '' }}
           tags: |
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
@@ -124,20 +136,6 @@ jobs:
           # own cache. type=gha is fine here — every consumer of this reusable ships a
           # small .NET/Python image (NOT the heavy mcp images, which stay on registry
           # cache to avoid the 10GB gha limit).
-          cache-from: type=gha,scope=${{ inputs.ecr-repo }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}
-
-      - name: Build and push (without GitHub token build args)
-        if: ${{ !inputs.pass-github-token-build-arg }}
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ${{ inputs.dockerfile }}
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
           cache-from: type=gha,scope=${{ inputs.ecr-repo }}
           cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}
 
