@@ -42,11 +42,20 @@ jobs:
   # branch protection (all have zero required checks), so removing it breaks no merge.
   test:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    # Nothing in this org had a timeout. A hung job holds a self-hosted runner
+    # until the 6h default, and the pool is shared across 13 repos.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
+          # KOR-53: the restore below was uncached, in every job, in every run.
+          # Safe to key on the lockfiles: all three consumers (web-api,
+          # rbac-api, entitlement-api) have one per csproj, and their security
+          # gate already fails when that stops being true (KOR-249).
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
       # GitHub Packages requires auth even to READ, and Korz.Shared.Contracts
       # lives there. Without this, `dotnet restore` fails with NU1101 ("no
       # packages exist with this id") for any consumer that does not vendor a
@@ -77,6 +86,20 @@ jobs:
           echo "authenticated to GitHub Packages"
 
       - run: dotnet restore
+
+      # Absorbed from dotnet-pr-check.yml, which is deleted in this change. That
+      # workflow was a second job doing its own checkout, its own setup-dotnet
+      # and its own full restore, to run a check that takes seconds -- and its
+      # `test` job re-ran the very tests this job already runs, so every PR paid
+      # for the .NET test suite twice.
+      #
+      # KOR-155: `|| echo "Format issues found"` made this decorative. Expect it
+      # to go red the first time somebody looks -- that is the information, not
+      # an obstacle. If formatting is not going to be enforced, delete the step;
+      # if it is, fix the formatting. A check that reports its own failure as
+      # success is the one option that helps nobody.
+      - run: dotnet format --verify-no-changes
+
       # --no-restore: reuse the restore above instead of restoring implicitly again.
       - run: dotnet test --no-restore --collect:"XPlat Code Coverage" --logger "trx" --results-directory TestResults
       # `dotnet tool install -g` FAILS when the tool is already installed
@@ -127,6 +150,7 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -166,7 +190,10 @@ jobs:
           echo "Coverage: $COVERAGE%"
 
       - name: Publish coverage to korz-status
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        # `master` instead of `develop`: rbac-api's default branch is master, so
+        # its coverage was never published, while develop -- which no consumer
+        # of this workflow still uses -- was.
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         continue-on-error: true
         run: |
           git clone https://x-access-token:${GH_TOKEN}@github.com/korz-sh/korz-status.git korz-status --depth=1
