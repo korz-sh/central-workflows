@@ -37,7 +37,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: korz-sh/central-workflows/.github/actions/semgrep-scan@main
+      # Local path, not `korz-sh/central-workflows/...@main`. This repo OWNS the
+      # action, so pinning itself to its own default branch means a PR that adds
+      # or changes an action is validated against the OLD copy on main -- and on
+      # the PR that first introduced them, against a copy that did not exist yet:
+      #
+      #   Can't find 'action.yml' ... for action
+      #   'korz-sh/central-workflows/.github/actions/semgrep-scan@main'
+      #
+      # A relative path resolves inside the checkout, so this gate tests the
+      # actions as the PR leaves them. Consumers still pin @main, which is what
+      # they want: the released copy, not someone's branch.
+      - uses: ./.github/actions/semgrep-scan
         with:
           # Ticketed debt only -- everything else blocks. Review on the date
           # in this repo's .trivyignore.
@@ -54,4 +65,5 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: korz-sh/central-workflows/.github/actions/supply-chain-scan@main
+      # Local path, same reason as the sast job above.
+      - uses: ./.github/actions/supply-chain-scan
