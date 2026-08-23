@@ -29,7 +29,13 @@ permissions:
 jobs:
   publish:
     name: Build & Push to GHCR
-    runs-on: ubuntu-latest
+    # Follows the org runner switch like every other job (KOR-320). This one
+    # was missed by the sweep in #22 -- it got its timeout but kept the pinned
+    # runner -- and it is the reason `Publish` has been failing in identity-api-v2
+    # and payments-service-api since 2026-08-16: hosted runners are blocked on
+    # this account ("recent account payments have failed"), so a job pinned to
+    # ubuntu-latest cannot start at all.
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     outputs:
       image-tag: ${{ steps.version.outputs.tag }}
 
