@@ -27,7 +27,7 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     # NOT required, deliberately. This secret exists in ZERO of the six calling
     # repos today (checked, not assumed), so `required: true` would convert a
     # workflow that merely never ran into one that FAILS the CI of every

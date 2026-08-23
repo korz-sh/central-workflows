@@ -19,15 +19,20 @@ on:
         type: string
         description: 'Passed from: github.event.workflow_run.head_branch'
       staging-branch:
-        required: false
+        # REQUIRED, with no default, and that is the fix. It defaulted to
+        # 'develop', which no consumer's default branch is -- so deploy-staging
+        # was skipped on every merge, and a skipped job reads as "nothing to do"
+        # rather than "misconfigured". entitlement-api documented having to pass
+        # `staging-branch: main` just to undo the default.
+        #
+        # `extra-staging-branch` is gone with it. It existed only as the escape
+        # hatch from that wrong default: identity-api-v2, rbac-api and
+        # payments-service-api all left staging-branch on dead 'develop' and put
+        # their REAL branch in the extra slot. One explicit input, passed by
+        # every caller, removes both the hazard and the workaround.
+        required: true
         type: string
-        default: 'develop'
-        description: 'Primary branch that triggers staging deploy'
-      extra-staging-branch:
-        required: false
-        type: string
-        default: ''
-        description: 'Optional second branch that also triggers staging (e.g. master)'
+        description: "Branch that triggers the staging deploy — the repo's default branch"
       prod-branch:
         required: false
         type: string
@@ -77,8 +82,7 @@ jobs:
   deploy-staging:
     if: |
       inputs.build-conclusion == 'success' &&
-      (inputs.trigger-branch == inputs.staging-branch ||
-       (inputs.extra-staging-branch != '' && inputs.trigger-branch == inputs.extra-staging-branch))
+      inputs.trigger-branch == inputs.staging-branch
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       id-token: write
@@ -148,7 +152,7 @@ jobs:
 
   deploy-prod:
     if: inputs.build-conclusion == 'success' && inputs.prod-branch != '' && inputs.trigger-branch == inputs.prod-branch
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       id-token: write
       contents: write
