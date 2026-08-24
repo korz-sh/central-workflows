@@ -11,7 +11,9 @@ fits together*, *what must not be broken*, and *where the surprises are*.
 The CI hub of the org. **12 files, no application code**: 9 workflows under
 `.github/workflows/` and 2 composite actions under `.github/actions/`, plus the README.
 
-Every other korz repo reaches into this one. Two different mechanisms, and the difference matters:
+Every other korz repo reaches into this one — a consumer's CI is one line pointing back here
+(`entitlement-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main").
+Two different mechanisms, and the difference matters:
 
 | Mechanism | Files | Who calls it (verified by grep across the sibling checkouts) |
 |---|---|---|
@@ -49,12 +51,15 @@ Consumers still pin `@main`, which is what they want.
 **`pr-check.yml`'s five rules are the only thing standing between a typo here and 12 broken repos.**
 Each rule exists because a real file here violated it, and each defect had the same signature —
 *0 jobs in 0 seconds, on every push, 0 successes over the file's entire life* (korz-dev
-`docs/central-workflows-gate.md`):
+`docs/central-workflows-gate.md`). The last of the five is
+`pr-check.yml` — "Every reusable workflow declares its interface":
 
 1. every workflow parses and has a `jobs` block — **and every `action.yml` has a `runs` block and
    a `shell:` on each composite `run` step** (`pr-check.yml:66-82`); omitting `shell` parses fine
    and fails at runtime in every caller at once.
-2. no check swallows its exit code (`|| echo`) — see the blind spot in §5.
+2. no check swallows its exit code — the grep covers `|| true` *and* `|| echo`, over the whole
+   file rather than the `run:` line, and the step plants a swallow to prove the pattern still
+   sees one (§5).
 3. **no step calls a reusable workflow.** `ci-go.yml` and `ci-node.yml` both had
    `uses: …/publish-status.yml` inside a step; that makes the whole file invalid.
 4. **no workflow declares `GITHUB_TOKEN`.** It is a reserved name; declaring it under
@@ -125,9 +130,8 @@ for its test suite twice (`ci-go.yml:15-20`, `ci-node.yml:41-44`, `ci-dotnet.yml
 
 Nothing here executes locally as a workflow; a reusable workflow is never run in place. What is
 runnable is the parse gate.
-
-The manifest entry in korz-dev `repos.conf` (branch `main`, stack `yaml`) declares exactly one ci
-step, and it is the only check that makes sense here:
+The manifest entry in `korz-dev/repos.conf` — "sin workflows que parsear" (branch `main`, stack
+`yaml`) declares exactly one ci step, and it is the only check that makes sense here:
 
 ```bash
 cd central-workflows
@@ -138,17 +142,15 @@ python3 -c "import glob,sys,yaml; fs=glob.glob('.github/workflows/*.yml'); \
 Verified 2026-08-23: all 9 workflows parse; every `workflow_call` file declares inputs, so
 `pr-check.yml` rule 5 passes. From korz-dev, the same thing via `korz verify central-workflows`.
 
-To flip where jobs run, org-wide, with no PR:
-
 ```bash
+# Flip where jobs run, org-wide, with no PR:
 gh variable set KORZ_RUNNER_LABELS --org korz-sh --body '["self-hosted","korz-dev"]'
 gh variable delete KORZ_RUNNER_LABELS --org korz-sh   # back to hosted
 ```
 
-Read the ruleset (needs `admin:org`, which `gh`'s default token lacks —
-`gh auth refresh -h github.com -s admin:org`):
-
 ```bash
+# Read the ruleset. Needs admin:org, which gh's default token lacks:
+#   gh auth refresh -h github.com -s admin:org
 gh api /orgs/korz-sh/rulesets/20664553
 ```
 
@@ -165,15 +167,23 @@ gh api /orgs/korz-sh/rulesets/20664553
   `web-client/.github/workflows/deploy-aws.yml:6` still references
   `central-workflows/deploy-web-client.yml` in a comment about a file that is gone.
 
-- **The `|| echo` gate cannot currently fire.** `pr-check.yml:103` greps
-  `'^\s*(-\s*)?run:.*\|\|\s*echo'` — it only inspects the **`run:` line itself**, so anything
-  inside a `run: |` block scalar is invisible to it. Run today, it prints
-  `no swallowed exit codes` while the repo contains four `|| true` and two `|| echo ""`:
-  `build-docker-ecr.yml:154-155` (`git tag … || true`, `git push … || true`),
-  `deploy-lambda.yml:203-204` (same pair) and `deploy-lambda.yml:136,214`
-  (`aws ssm get-parameter … 2>/dev/null || echo ""`). The SSM ones are the legitimate
-  default-value idiom; the four `git tag/push` are a real swallow the gate never sees. Also note
-  the gate matches `|| echo` only, never `|| true`.
+- **The `|| true` / `|| echo` gate used to be unable to fire; it can now, and proves it every run.**
+  The old pattern was anchored to the `run:` line itself, so every real command — which lives inside
+  a `run: |` block, on the lines that follow — was invisible to it
+  (`pr-check.yml` — "THIS GATE COULD NOT FIRE, AND SAID SO IN GREEN."). Today it greps the whole
+  file for `|| true` *and* `|| echo`, and excludes only comments, itself, and the
+  default-value command substitution matched by its closing paren
+  (`pr-check.yml` — "a command substitution supplying a DEFAULT VALUE, which asserts"). Then it
+  plants a swallow inside a `run: |` block and **fails the step if the detector misses it**
+  (`pr-check.yml` — "the detector cannot see a planted swallow -- it proves nothing"); a green run
+  now prints `no swallowed exit codes, and the detector can still see one`.
+
+- **The four `git tag` / `git push` swallows are gone.** Both call sites became an explicit
+  existence check instead of `|| true`: `build-docker-ecr.yml` — "el tag ${TAG} ya existe — no se re-taggea"
+  and `deploy-lambda.yml` — "el tag ${TAG}-prod ya existe — no se re-taggea", each behind
+  `if git rev-parse -q --verify … else`. What is left in the tree is two `|| echo ""` on the SSM
+  lookups (`deploy-lambda.yml:136` and `deploy-lambda.yml:221`) — the legitimate default-value
+  idiom, excluded on purpose.
 
 - **`.trivyignore` does not exist in this repo.** `security.yml:53-54` says *"Review on the date in
   this repo's `.trivyignore`"* and `supply-chain-scan/action.yml:91-93` says pre-existing debt is
@@ -208,8 +218,10 @@ gh api /orgs/korz-sh/rulesets/20664553
   the only way to ship an image was to touch a file under `src/` — hence **48 `chore: trigger
   build` commits across 7 repos in 6 months**.
 
-- **PRs cannot build.** `build-docker-ecr`'s OIDC trust policy allows `repo:korz-sh/*:ref:refs/heads/*`,
-  so a `pull_request` run is rejected with
+- **PRs cannot build.** `build-docker-ecr`'s OIDC trust policy
+  (`build-docker-ecr.yml` — "repo:korz-sh/*:ref:refs/heads/*", declared in
+  `infraestructure/app/stacks/ci-oidc/variables.tf` — "repo:korz-sh/*:ref:refs/heads/*") allows
+  branch pushes only, so a `pull_request` run is rejected with
   `Not authorized to perform sts:AssumeRoleWithWebIdentity`. Skipping on PRs is deliberate; the
   permanent red it replaced (KOR-67) trained people to merge with `--admin`, which then masked a
   real failure.
@@ -232,31 +244,39 @@ gh api /orgs/korz-sh/rulesets/20664553
 
 - **A `.NET` supply-chain scan with no lockfile passes green covering nothing.** Trivy enumerates
   NuGet by *reading* `packages.lock.json`. `supply-chain-scan` therefore ships an opt-in
-  `dotnet-lockfile-check` that counts lockfiles against csproj files and errors with
-  `Missing packages.lock.json (n of c)` (KOR-249).
+  `dotnet-lockfile-check` that counts lockfiles against csproj files and errors:
+  `.github/actions/supply-chain-scan/action.yml` — "Missing packages.lock.json ($n of $c)" (KOR-249).
 
-- **Semgrep runs at `--severity ERROR`, not WARNING**, and its output is plain text on purpose (no
-  `--quiet`, no `--json`) so the *"Parsed lines" / "Targets scanned"* summary stays visible — a
-  scan that failed to parse half the codebase still exits green.
+- **Semgrep runs at ERROR severity, not WARNING** (`.github/actions/semgrep-scan/action.yml` — "--severity ERROR"),
+  and its output is plain text on purpose (no `--quiet`, no `--json`) so the *"Parsed lines" /
+  "Targets scanned"* summary stays visible — a scan that failed to parse half the codebase still
+  exits green.
 
 ---
 
 ## 6. Adding something
 
 - **A new reusable workflow** → it must declare `workflow_call` inputs *or* secrets (rule 5), be
-  called from a job and never from a step (rule 3), and must not declare `GITHUB_TOKEN` (rule 4).
+  called from a job and never from a step (rule 3), and must not declare `GITHUB_TOKEN` (rule 4) —
+  all three rejections are spelled out in the gate, e.g.
+  `pr-check.yml` — "workflow_call with no inputs and no secrets".
   Give it `runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}` and a
   `timeout-minutes` — nothing in this org had one, and a hung job holds a shared self-hosted runner
   for the 6h default.
 - **A new composite action** → `.github/actions/<name>/action.yml` with a `runs:` block and
   **`shell: bash` on every `run` step**. Pass inputs through `env:`, never interpolate `${{ }}`
   inside the script: that is the injection pattern semgrep flags
-  (`yaml.github-actions.security.run-shell-injection`), and this repo must not trip its own gate.
+  (`.github/actions/semgrep-scan/action.yml` — "yaml.github-actions.security.run-shell-injection"), and this repo
+  must not trip its own gate.
   If the org ruleset requires its check by name, it has to be an action, not a workflow.
 - **A new required status context** → the ruleset is org-wide config with no generator in the repo
   any more; edit it via `PUT /orgs/korz-sh/rulesets/20664553` and update korz-dev
   `docs/ruleset-korz-security-gate.md` in the same breath.
 - **An optional step** → `continue-on-error: true`, never `|| true` or `|| echo`. The real exit code
-  survives and the step shows as failed, so a reader can still tell what happened. The gate does not
-  catch `|| true` today (§5) — that is a hole, not a licence.
-- **Anything at all** → remember there is no staging. The merge is the release, to 12 repos.
+  survives and the step shows as failed, so a reader can still tell what happened. The gate catches
+  both spellings now and greps the whole file, so `|| true` inside a `run: |` block fails the PR
+  (`pr-check.yml` — "Use 'continue-on-error: true' if the step is genuinely optional."). The only
+  exception it makes is `VAR=$(cmd || echo "")`.
+- **Anything at all** → remember there is no staging. The merge is the release, to 12 repos that
+  all pin the default branch — e.g.
+  `entitlement-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main".
