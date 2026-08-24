@@ -151,5 +151,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.version.outputs.version }}" || true
-          git push origin "${{ steps.version.outputs.version }}" || true
+          # `|| true` en las dos líneas se tragaba dos cosas MUY distintas: que
+          # el tag ya exista (esperable, un re-run del mismo commit) y que el
+          # push falle (permisos, red, protección de tags). Lo segundo dejaba el
+          # job en verde diciendo que taggeó una release que no existe.
+          TAG="${{ steps.version.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "el tag ${TAG} ya existe — no se re-taggea"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
