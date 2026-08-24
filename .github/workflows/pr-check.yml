@@ -98,18 +98,56 @@ jobs:
       #    job, so the reader can still tell what happened.
       - name: No check swallows its exit code
         run: |
-          # A command substitution supplying a default -- VAR=$(... || echo "")
-          # -- asserts nothing and is excluded; everything else is a gate.
-          hits=$(grep -rn -E '^\s*(-\s*)?run:.*\|\|\s*echo' .github/workflows/ \
-                 | grep -vE '^[^:]+:[0-9]+:\s*[A-Za-z_][A-Za-z0-9_]*=\$\(' || true)
+          # THIS GATE COULD NOT FIRE, AND SAID SO IN GREEN.
+          #
+          # The old pattern was anchored to the `run:` line itself:
+          #
+          #     grep -rn -E '^\s*(-\s*)?run:.*\|\|\s*echo' .github/workflows/
+          #
+          # Every real command in this repo lives INSIDE a `run: |` block, on
+          # the lines that follow. So it printed "no swallowed exit codes" while
+          # four genuine swallows sat in the tree -- `git tag ... || true` and
+          # `git push ... || true` in build-docker-ecr.yml and deploy-lambda.yml,
+          # both on the release path, where losing an exit code means believing
+          # you tagged a release that does not exist.
+          #
+          # It also only ever looked for `|| echo`, never `|| true`.
+          #
+          # Now it greps the whole file and excludes, explicitly:
+          #   - comments
+          #   - a command substitution supplying a DEFAULT VALUE, which asserts
+          #     nothing: `VAR=$(cmd || echo "")`. Matched by the closing `)` on
+          #     the same line, not by the `VAR=$(` opener -- these span many
+          #     lines here (the SSM lookup is six), and a per-line exclusion on
+          #     the opener misses every one of them.
+          #   - this step itself, whose own `|| true` is grep returning 1 on no
+          #     match -- excluded by name so the exclusion cannot silently widen
+          hits=$(grep -rnE '\|\|[[:space:]]*(true|echo)' .github/workflows/ \
+                 | grep -vE ':[0-9]+:[[:space:]]*#' \
+                 | grep -vE '\|\|[[:space:]]*echo[[:space:]]*"[^"]*"[[:space:]]*\)' \
+                 | grep -v 'pr-check.yml' || true)
           if [ -n "$hits" ]; then
             echo "These steps can never fail:"
             echo "$hits"
             echo
             echo "Use 'continue-on-error: true' if the step is genuinely optional."
+            echo "If a command may legitimately no-op, test for the condition"
+            echo "instead: swallowing the exit code hides the OTHER failures too."
             exit 1
           fi
-          echo "no swallowed exit codes"
+
+          # Paired, as everything else here: a detector that has never seen a
+          # violation proves nothing. One is planted and the same pattern is run
+          # against it. This is what the old version was missing -- it was never
+          # checked against a swallow that lives inside a `run: |` block, which
+          # is where every swallow actually lives.
+          planted=$(mktemp -d)/planted.yml
+          printf 'jobs:\n  x:\n    steps:\n      - run: |\n          make thing || true\n' > "$planted"
+          if ! grep -qE '\|\|[[:space:]]*(true|echo)' "$planted"; then
+            echo "the detector cannot see a planted swallow -- it proves nothing"
+            exit 1
+          fi
+          echo "no swallowed exit codes, and the detector can still see one"
 
       # 3. A reusable WORKFLOW can only be called from a job, never from a
       #    step. ci-go.yml and ci-node.yml both had `uses: .../publish-status.yml`

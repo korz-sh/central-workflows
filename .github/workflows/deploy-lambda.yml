@@ -200,8 +200,15 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           TAG=$(git describe --tags --always | head -1)
-          git tag -a "${TAG}-prod" -m "Prod release: ${TAG}" || true
-          git push origin "${TAG}-prod" || true
+          # Ver build-docker-ecr.yml: `|| true` mezclaba "el tag ya existe" con
+          # "el push falló". En el camino de PROD, lo segundo en verde significa
+          # creer que hay una release taggeada que no está.
+          if git rev-parse -q --verify "refs/tags/${TAG}-prod" >/dev/null; then
+            echo "el tag ${TAG}-prod ya existe — no se re-taggea"
+          else
+            git tag -a "${TAG}-prod" -m "Prod release: ${TAG}"
+            git push origin "${TAG}-prod"
+          fi
 
       - name: Fetch Discord webhook from SSM
         id: discord
