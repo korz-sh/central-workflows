@@ -67,3 +67,48 @@ jobs:
       - uses: actions/checkout@v4
       # Local path, same reason as the sast job above.
       - uses: ./.github/actions/supply-chain-scan
+
+  # A cancelled job is not a green job (KOR-340).
+  #
+  # When GitHub kills a job for exceeding timeout-minutes it marks it
+  # `cancelled`, not `failure` — and a run whose only non-success job is
+  # cancelled does not block a merge. So a scan that never ran and a scan that
+  # found nothing look identical from the outside: no findings either way.
+  #
+  # Found in entitlement-api, which had 2 cancelled Security runs out of 8, days
+  # apart, with nobody noticing either one. Measured sast duration on a quiet
+  # runner is 23-34s; the run that got killed had been going for over 19 minutes
+  # because the self-hosted box was running three jobs and a docker build at
+  # once. The timeout is not miscalibrated — but the failure mode is the same
+  # either way: silence read as approval. This file is copy-pasted across the
+  # org, so every repo had the same hole.
+  #
+  # This job turns that silence into a red run. It cannot itself be skipped:
+  # `if: always()` runs it even when a dependency is cancelled or failed.
+  gate:
+    name: gate
+    needs: [sast, supply-chain]
+    if: always()
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    steps:
+      - name: Every scan must have actually run
+        env:
+          SAST: ${{ needs.sast.result }}
+          SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+        run: |
+          set -euo pipefail
+          rc=0
+          for scan in SAST SUPPLY_CHAIN; do
+            result="${!scan}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$scan did not run to completion (result: $result)"
+              rc=1
+            else
+              echo "$scan: success"
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::A scan that did not run is not a scan that passed."
+            exit 1
+          fi
