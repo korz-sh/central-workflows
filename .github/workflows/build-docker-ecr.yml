@@ -72,7 +72,17 @@ jobs:
     # two of them mine today. The workaround was that common because the button
     # never worked.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    # Build/deploy corre en GitHub, NO en el self-hosted, aunque el CI sí lo use.
+    #
+    # KORZ_BUILD_RUNNER_LABELS existe sólo para partir eso en dos. El
+    # self-hosted es la máquina de trabajo del dev, y estos jobs son los caros:
+    # un `docker build` se come la RAM y deja atrás capas y cachés de buildx —
+    # 31 GB de volúmenes huérfanos la última vez, con el disco al 99%.
+    #
+    # El CI (tests, lint, contract) es liviano y sigue donde diga
+    # KORZ_RUNNER_LABELS. Sin la variable nueva, esto cae a ubuntu-latest, que
+    # es el default correcto para un repo que no configuró nada.
+    runs-on: ${{ fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       contents: write
       id-token: write
