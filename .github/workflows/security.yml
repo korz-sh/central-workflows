@@ -36,7 +36,11 @@ name: Security
 # defecto lo scanea igual y el hallazgo aparece minutos después.
 on:
   push:
-    branches: [main, master]
+    # Sólo `main`: es la rama por defecto de ESTE repo y `master` no existe acá.
+    # Listar las dos venía de que la org es mixta (algunos repos main, otros
+    # master), pero un filtro con una rama inexistente no protege nada — sólo
+    # sugiere que hay un flujo que no existe.
+    branches: [main]
   workflow_dispatch:
   schedule:
     # lunes 06:00 UTC — CVEs nuevas sobre código que nadie tocó.
