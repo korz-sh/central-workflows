@@ -11,23 +11,24 @@ name: Security
 #
 # `develop` is gone from the push list: it survived in 3 of 13 repos and was 0
 # commits ahead in 2 of them. The trigger described a flow nobody used.
-# LOS SCANS NO CORREN EN CADA PR (KOR-345).
+# LOS SCANS CORREN EN PR **Y** EN SCHEDULE (KOR-345).
 #
-# Un scan de SAST/supply-chain mira el árbol entero, no el diff: correrlo por PR
-# repite el mismo trabajo sobre el mismo código y era ~1/3 de la cola del runner
-# self-hosted. Medido en web-api: 96% del reloj de un CI era ESPERA, no ejecución
-# — 93 min de cola contra 4 de trabajo real.
+# Sacarlos del PR fue el plan y hubo que revertirlo: una RULESET del repo exige
+# `sast` y `supply-chain` como checks requeridos en la rama por defecto — en los
+# 13 repos. Un check requerido que nunca reporta no falla el PR, lo deja
+# BLOCKED para siempre esperando algo que no va a llegar.
 #
-# Ahora corre donde el resultado cambia algo:
-#   - push a la rama por defecto (lo que efectivamente se despliega)
-#   - schedule semanal (una CVE nueva aparece sin que nadie toque el código —
-#     este es el caso que un scan por PR NUNCA cubrió)
-#   - workflow_dispatch (a mano, antes de un release o al revisar un hallazgo)
+# La ruleset es una capa distinta de la branch protection clásica y no aparece en
+# `/branches/{b}/protection`; hay que mirar `/rules/branches/{b}`. Por eso el
+# primer intento pareció seguro.
 #
-# Se pierde el scan del código de una rama antes de mergear. A cambio, el push a
-# la rama por defecto lo scanea igual y el hallazgo aparece minutos después, en
-# un repo de una persona donde nadie despliega desde una rama.
+# Lo que SI se conserva del corte: el `schedule` semanal, que cubre un caso que
+# el scan por PR nunca cubrió — una CVE nueva sobre código que nadie tocó.
+#
+# Para sacar los scans del PR de verdad hay que editar antes la ruleset, y eso es
+# una decisión de política de seguridad, no de performance de CI.
 on:
+  pull_request:
   push:
     branches: [main, master]
   workflow_dispatch:
