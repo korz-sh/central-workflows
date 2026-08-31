@@ -159,15 +159,18 @@ jobs:
           SAST: ${{ needs.sast.result }}
           SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
         run: |
+          # Sin || ni fallback: el paso entero es continue-on-error, así que
+          # un SSM sin parámetro o sin permiso queda VISIBLE como paso rojo
+          # (no bloquea el gate) en vez de tragado — la notificación de
+          # deploys estuvo muerta en silencio meses por el patrón || echo.
           WEBHOOK=$(aws ssm get-parameter \
             --name /korz/discord-security-webhook-url \
             --with-decryption --query 'Parameter.Value' --output text \
-            --region us-east-1 2>/dev/null || echo "")
-          [ -z "$WEBHOOK" ] && { echo "sin webhook de security en SSM, no se notifica"; exit 0; }
+            --region us-east-1)
           EVENT="${{ github.event_name }}"
           [ "$EVENT" = "schedule" ] && ORIGIN="scan semanal (CVE nueva sobre código sin tocar?)" || ORIGIN="push a ${{ github.ref_name }}"
           curl -sf -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "$(jq -n \
             --arg c "🔒 **Security scan FALLÓ** en \`${{ github.repository }}\` — $ORIGIN
           sast: $SAST · supply-chain: $SUPPLY_CHAIN
           <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>" \
-            '{content: $c}')" || echo "aviso a discord falló (no bloquea)"
+            '{content: $c}')"
