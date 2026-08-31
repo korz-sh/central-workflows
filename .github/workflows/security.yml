@@ -52,10 +52,11 @@ concurrency:
 jobs:
   sast:
     name: sast
-    # Follows the org runner switch rather than pinning ubuntu-latest: pinned,
-    # these two REQUIRED jobs died on the exhausted hosted quota and blocked
-    # every merge in the org (KOR-320).
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    # BUILD runners, not the test runners: `container:` needs a Docker daemon,
+    # and KORZ_RUNNER_LABELS points at Fargate runners that have none (seccomp
+    # blocks every rootless engine — probed live). Same fix as web-client #94,
+    # which this template briefly overwrote on 2026-08-31.
+    runs-on: ${{ vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
     container: semgrep/semgrep:1.172.0
     # Nothing in this org had a timeout before. A hung job on a self-hosted
     # runner holds the runner until the 6h default.
