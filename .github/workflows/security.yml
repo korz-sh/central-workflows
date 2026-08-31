@@ -168,10 +168,39 @@ jobs:
             --name /korz/discord-security-webhook-url \
             --with-decryption --query 'Parameter.Value' --output text \
             --region us-east-1)
-          EVENT="${{ github.event_name }}"
-          [ "$EVENT" = "schedule" ] && ORIGIN="scan semanal (CVE nueva sobre código sin tocar?)" || ORIGIN="push a ${{ github.ref_name }}"
-          curl -sf -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "$(jq -n \
-            --arg c "🔒 **Security scan FALLÓ** en \`${{ github.repository }}\` — $ORIGIN
-          sast: $SAST · supply-chain: $SUPPLY_CHAIN
-          <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>" \
-            '{content: $c}')"
+          # Embed en vez de texto pelado: el canal se lee de un vistazo y el
+          # scan semanal —el que nadie está mirando cuando aparece una CVE—
+          # se distingue del push a mano.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ORIGIN="🗓️ Scan semanal — CVE nueva sobre código que nadie tocó"
+          else
+            ORIGIN="push a \`${{ github.ref_name }}\` por ${{ github.actor }}"
+          fi
+          # `case`, no `[ ] && echo || echo`: el gate de este repo prohíbe
+          # `|| echo` en workflows (traga exit codes) y tiene razón — acá
+          # sería formateo de strings, pero un patrón prohibido con una
+          # excepción deja de ser un patrón.
+          fmt() {
+            case "$1" in
+              success) echo "✅ limpio" ;;
+              failure) echo "🔴 hallazgos" ;;
+              *) echo "⚠️ $1" ;;
+            esac
+          }
+          jq -n \
+            --arg title "🔒 ${{ github.repository }}" \
+            --arg origin "$ORIGIN" \
+            --arg sast "$(fmt "$SAST")" \
+            --arg sc "$(fmt "$SUPPLY_CHAIN")" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{username: "korz security",
+              embeds: [{
+                title: $title, url: $url, color: 15158332,
+                description: $origin,
+                fields: [
+                  {name: "SAST (semgrep)", value: $sast, inline: true},
+                  {name: "Supply chain (trivy)", value: $sc, inline: true}
+                ],
+                footer: {text: "los hallazgos completos están en el log del job"}
+              }]}' > /tmp/discord.json
+          curl -sf -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @/tmp/discord.json
