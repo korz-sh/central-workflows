@@ -151,19 +151,25 @@ jobs:
             --region us-east-1 2>/dev/null || echo "")
           echo "webhook=$WEBHOOK" >> $GITHUB_OUTPUT
 
+      # `webhook`, NO `webhook_url`: con el nombre equivocado la action tira
+      # un warning ("Unexpected input(s) 'webhook_url'") y sigue en verde sin
+      # mandar nada. Así estuvo desde que se escribió: cero mensajes, cero
+      # señales de que algo faltaba.
       - name: Notify Discord (staging)
         if: always() && steps.discord.outputs.webhook != ''
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook_url: ${{ steps.discord.outputs.webhook }}
+          webhook: ${{ steps.discord.outputs.webhook }}
           status: ${{ job.status }}
-          title: '🚀 Staging Deploy: ${{ github.repository }}'
+          nodetail: true
+          username: korz deploys
+          title: ${{ job.status == 'success' && format('✅ {0} → staging', inputs.ecr-repo) || format('❌ {0} → staging FALLÓ', inputs.ecr-repo) }}
           description: |
-            **Service:** ${{ github.repository }}
-            **Branch:** ${{ inputs.trigger-branch }}
-            **Status:** ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
-            **Commit:** `${{ github.sha }}` (${{ github.actor }})
-          color: ${{ job.status == 'success' && 6937668 || 16711680 }}
+            **Lambda** `${{ vars.LAMBDA_FUNCTION_STAGING }}` · **imagen** `${{ inputs.ecr-repo }}:latest`
+            **Commit** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) por **${{ github.actor }}**
+            > ${{ github.event.head_commit.message && github.event.head_commit.message || inputs.trigger-branch }}
+            [ver el run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: ${{ job.status == 'success' && 3066993 || 15158332 }}
 
   deploy-prod:
     if: inputs.build-conclusion == 'success' && inputs.prod-branch != '' && inputs.trigger-branch == inputs.prod-branch
@@ -255,12 +261,14 @@ jobs:
         if: always() && steps.discord.outputs.webhook != ''
         uses: sarisia/actions-status-discord@v1
         with:
-          webhook_url: ${{ steps.discord.outputs.webhook }}
+          webhook: ${{ steps.discord.outputs.webhook }}
           status: ${{ job.status }}
-          title: '🔥 PRODUCTION Deploy: ${{ github.repository }}'
+          nodetail: true
+          username: korz deploys
+          title: ${{ job.status == 'success' && format('🚀 {0} → PRODUCCIÓN', inputs.ecr-repo) || format('🔥 {0} → PRODUCCIÓN FALLÓ', inputs.ecr-repo) }}
           description: |
-            **Service:** ${{ github.repository }}
-            **Branch:** ${{ inputs.trigger-branch }}
-            **Status:** ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
-            **Commit:** `${{ github.sha }}` (${{ github.actor }})
-          color: ${{ job.status == 'success' && 3329330 || 16711680 }}
+            **Lambda** `${{ vars.LAMBDA_FUNCTION_PROD }}` · **imagen** `${{ inputs.ecr-repo }}:latest`
+            **Commit** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) por **${{ github.actor }}**
+            > ${{ github.event.head_commit.message && github.event.head_commit.message || inputs.trigger-branch }}
+            [ver el run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: ${{ job.status == 'success' && 15844367 || 15158332 }}
