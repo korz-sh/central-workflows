@@ -137,3 +137,40 @@ jobs:
             echo "::error::A scan that did not run is not a scan that passed."
             exit 1
           fi
+
+      # Un scan rojo que nadie ve es igual a un scan verde (la lección de
+      # KOR-340, una capa más arriba). El canal de security de Discord recibe
+      # SOLO fallas: sast/supply-chain con hallazgos, o scans que no corrieron.
+      # El caso schedule es el que importa: una CVE nueva aparece un lunes a
+      # las 06:00 sin que nadie toque código ni mire Actions.
+      # El webhook viene de SSM (us-east-1, junto al de deploys); si el
+      # parámetro no existe el paso se saltea sin romper el gate.
+      - name: Configure AWS credentials (for SSM webhook)
+        if: failure()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+        continue-on-error: true
+      - name: Notify security channel
+        if: failure()
+        continue-on-error: true
+        env:
+          SAST: ${{ needs.sast.result }}
+          SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+        run: |
+          # Sin || ni fallback: el paso entero es continue-on-error, así que
+          # un SSM sin parámetro o sin permiso queda VISIBLE como paso rojo
+          # (no bloquea el gate) en vez de tragado — la notificación de
+          # deploys estuvo muerta en silencio meses por el patrón || echo.
+          WEBHOOK=$(aws ssm get-parameter \
+            --name /korz/discord-security-webhook-url \
+            --with-decryption --query 'Parameter.Value' --output text \
+            --region us-east-1)
+          EVENT="${{ github.event_name }}"
+          [ "$EVENT" = "schedule" ] && ORIGIN="scan semanal (CVE nueva sobre código sin tocar?)" || ORIGIN="push a ${{ github.ref_name }}"
+          curl -sf -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "$(jq -n \
+            --arg c "🔒 **Security scan FALLÓ** en \`${{ github.repository }}\` — $ORIGIN
+          sast: $SAST · supply-chain: $SUPPLY_CHAIN
+          <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>" \
+            '{content: $c}')"
