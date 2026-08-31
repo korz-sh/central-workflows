@@ -82,7 +82,12 @@ jobs:
     # El CI (tests, lint, contract) es liviano y sigue donde diga
     # KORZ_RUNNER_LABELS. Sin la variable nueva, esto cae a ubuntu-latest, que
     # es el default correcto para un repo que no configuró nada.
-    runs-on: ${{ fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
+    # KORZ_CODEBUILD_PROJECT tiene precedencia: el label de CodeBuild exige el
+    # run_id interpolado (codebuild-<proyecto>-<run_id>-<run_attempt>) y GitHub
+    # NO evalúa ${{ }} dentro de valores de variables, así que el formato se
+    # arma acá con format(). Sin esa var, KORZ_BUILD_RUNNER_LABELS como
+    # siempre, y sin ninguna, ubuntu-latest.
+    runs-on: ${{ vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       contents: write
       id-token: write
