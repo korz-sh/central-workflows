@@ -11,24 +11,30 @@ name: Security
 #
 # `develop` is gone from the push list: it survived in 3 of 13 repos and was 0
 # commits ahead in 2 of them. The trigger described a flow nobody used.
-# LOS SCANS CORREN EN PR **Y** EN SCHEDULE (KOR-345).
+# LOS SCANS NO CORREN EN CADA PR (KOR-345).
 #
-# Sacarlos del PR fue el plan y hubo que revertirlo: una RULESET del repo exige
-# `sast` y `supply-chain` como checks requeridos en la rama por defecto — en los
-# 13 repos. Un check requerido que nunca reporta no falla el PR, lo deja
-# BLOCKED para siempre esperando algo que no va a llegar.
+# Un scan de SAST/supply-chain mira el árbol ENTERO, no el diff: correrlo por PR
+# repite el mismo trabajo sobre el mismo código. En el runner self-hosted eso era
+# ~1/3 de la cola — medido en web-api, 96% del reloj de un CI era espera (93 min
+# de cola contra 4 de ejecución real).
 #
-# La ruleset es una capa distinta de la branch protection clásica y no aparece en
-# `/branches/{b}/protection`; hay que mirar `/rules/branches/{b}`. Por eso el
-# primer intento pareció seguro.
+# Corre donde el resultado cambia algo:
+#   - push a la rama por defecto: lo que efectivamente se despliega
+#   - schedule semanal: una CVE nueva aparece sin que nadie toque el código, y
+#     ese caso el scan por PR NUNCA lo cubrió
+#   - workflow_dispatch: a mano, antes de un release o al revisar un hallazgo
 #
-# Lo que SI se conserva del corte: el `schedule` semanal, que cubre un caso que
-# el scan por PR nunca cubrió — una CVE nueva sobre código que nadie tocó.
+# HIZO FALTA APAGAR UNA RULESET DE ORG ("korz security gate", id 20664553) que
+# exigía `sast` y `supply-chain` como checks requeridos en los 13 repos. Un check
+# requerido que nunca reporta no falla el PR: lo deja BLOCKED para siempre. Ese
+# fue el primer intento y por eso se revirtió.
 #
-# Para sacar los scans del PR de verdad hay que editar antes la ruleset, y eso es
-# una decisión de política de seguridad, no de performance de CI.
+# La ruleset quedó `enforcement: disabled` con sus reglas intactas, así que
+# volver a exigirlos es cambiar ese único campo.
+#
+# Se pierde el scan de una rama antes de mergear. A cambio, el push a la rama por
+# defecto lo scanea igual y el hallazgo aparece minutos después.
 on:
-  pull_request:
   push:
     branches: [main, master]
   workflow_dispatch:
