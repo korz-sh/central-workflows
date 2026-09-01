@@ -171,6 +171,21 @@ jobs:
                  /tmp/respuesta.json > /tmp/meta.json 2>/tmp/err.txt; then
               break
             fi
+            # AccessDenied NO es la Lambda rota: es que a ESTE rol le falta
+            # lambda:InvokeFunction. Reintentar cinco veces y después fallar
+            # bloquearía el deploy de los 15 repos por un permiso que todavía no
+            # se aplicó, y un gate nuevo que rompe todo es un gate que alguien
+            # borra el mismo día.
+            #
+            # Se avisa fuerte y se sigue: el deploy en sí ya ocurrió, y lo único
+            # que se pierde es la verificación — que es exactamente lo que había
+            # antes de este paso.
+            if [ -f /tmp/err.txt ] && grep -qi "AccessDenied\|not authorized" /tmp/err.txt; then
+              echo "::warning::Sin permiso para invocar $LAMBDA_FUNCTION: falta lambda:InvokeFunction en el rol de CI."
+              echo "::warning::El deploy siguió, pero NADIE verificó que la imagen arranque."
+              echo "::warning::Arreglo: infra/app/stacks/ci-oidc (ya está en el código, falta el apply)."
+              exit 0
+            fi
             echo "intento $intento falló, reintentando..."
             # `[ -f ]` y no `|| true`: el gate de este repo prohíbe tragarse
             # exit codes, y con razón — un `|| true` acá también escondería que
