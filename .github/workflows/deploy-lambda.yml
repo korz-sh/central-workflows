@@ -140,6 +140,66 @@ jobs:
             --region ${{ inputs.aws-region-staging }}
           echo "✅ Lambda ready"
 
+      # INVOCARLA. `wait function-updated` sólo dice que AWS terminó de cambiar
+      # la configuración: no ejecuta el código ni una vez. Una imagen con un
+      # import roto, un handler mal nombrado o una dependencia faltante pasa ese
+      # wait sin problema, y el deploy se anuncia como éxito en Discord mientras
+      # el servicio devuelve 502 a todo el mundo. El primero en enterarse es un
+      # usuario.
+      #
+      # Se pide /health, que es anónimo en todos nuestros servicios. Lo que se
+      # exige es que el runtime RESPONDA y que no haya un error de función: un
+      # 503 con cuerpo (base caída) es un servicio que arrancó, y eso es lo que
+      # este paso verifica. Un FunctionError es la imagen que no levanta.
+      - name: La función responde
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION_STAGING }}
+          REGION: ${{ inputs.aws-region-staging }}
+        run: |
+          set -euo pipefail
+
+          payload="$(printf '%s' '{"version":"2.0","rawPath":"/health","rawQueryString":"","requestContext":{"http":{"method":"GET","path":"/health","sourceIp":"127.0.0.1","protocol":"HTTP/1.1","userAgent":"deploy-smoke"},"requestId":"deploy-smoke","stage":"$default","apiId":"smoke","domainName":"smoke","accountId":"0","time":"x","timeEpoch":0},"headers":{},"isBase64Encoded":false}' | base64 -w0)"
+
+          # Hasta 5 intentos: el primer invoke paga el cold start de una imagen
+          # recién publicada y puede pasarse del timeout del cliente.
+          for intento in 1 2 3 4 5; do
+            if aws lambda invoke \
+                 --function-name "$LAMBDA_FUNCTION" \
+                 --region "$REGION" \
+                 --payload "$payload" \
+                 --cli-read-timeout 60 \
+                 /tmp/respuesta.json > /tmp/meta.json 2>/tmp/err.txt; then
+              break
+            fi
+            echo "intento $intento falló, reintentando..."
+            # `[ -f ]` y no `|| true`: el gate de este repo prohíbe tragarse
+            # exit codes, y con razón — un `|| true` acá también escondería que
+            # cat falló por otro motivo. El archivo puede no existir si el aws
+            # cli murió antes de escribir nada, y eso es normal.
+            if [ -f /tmp/err.txt ]; then cat /tmp/err.txt; fi
+            sleep 5
+          done
+
+          echo "--- respuesta ---"
+          if [ -f /tmp/respuesta.json ]; then head -c 500 /tmp/respuesta.json; fi
+          echo
+
+          # FunctionError significa que el código explotó: import roto, handler
+          # inexistente, dependencia faltante. Es exactamente el fallo que este
+          # paso existe para atrapar, y el que `wait function-updated` no ve.
+          if grep -q '"FunctionError"' /tmp/meta.json 2>/dev/null; then
+            echo "::error::La Lambda respondió con FunctionError — la imagen no arranca."
+            echo "::error::$(head -c 800 /tmp/respuesta.json)"
+            exit 1
+          fi
+
+          if ! grep -q '"statusCode"' /tmp/respuesta.json 2>/dev/null; then
+            echo "::error::La respuesta no tiene statusCode: el handler no devolvió una respuesta HTTP."
+            exit 1
+          fi
+
+          echo "✅ La función arranca y responde."
+
       - name: Fetch Discord webhook from SSM
         id: discord
         run: |
