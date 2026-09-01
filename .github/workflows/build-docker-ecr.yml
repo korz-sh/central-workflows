@@ -218,18 +218,35 @@ jobs:
           echo "image-tag=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
           echo "🐳 Image URI: ${IMAGE_URI}"
 
+      # El tag se crea por la API de refs y no con `git push`, y no es
+      # cuestión de gusto: `git push` inspecciona el arbol que se empuja, y
+      # si el commit toca `.github/workflows/**` lo rechaza con
+      #
+      #   refusing to allow a GitHub App to create or update workflow
+      #   `.github/workflows/x.yml` without `workflows` permission
+      #
+      # aunque lo unico que se este empujando sea un tag que ya apunta a un
+      # commit que ya esta en el remoto. O sea: cualquier commit que toque un
+      # workflow rompe su propio build, en el paso de despues de haber
+      # construido y publicado la imagen. Medido en zonda-api.
+      #
+      # `permissions: workflows: write` no es la salida: no existe como
+      # permiso de job, y el token del workflow no puede otorgarselo. La API
+      # de refs no hace esa validacion — probado creando el tag por API sobre
+      # el mismo commit que `git push` habia rechazado.
       - name: Create git tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # `|| true` en las dos líneas se tragaba dos cosas MUY distintas: que
-          # el tag ya exista (esperable, un re-run del mismo commit) y que el
-          # push falle (permisos, red, protección de tags). Lo segundo dejaba el
-          # job en verde diciendo que taggeó una release que no existe.
-          TAG="${{ steps.version.outputs.version }}"
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+          # Distinguir "ya existe" de "fallo" sigue siendo el punto: un re-run
+          # del mismo commit es esperable, un fallo de permisos o de red no, y
+          # tragarse el segundo deja el job en verde diciendo que taggeo una
+          # release que no existe.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
             echo "el tag ${TAG} ya existe — no se re-taggea"
-          else
-            git tag "${TAG}"
-            git push origin "${TAG}"
+            exit 0
           fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" \
+            -f sha="${GITHUB_SHA}"
