@@ -100,19 +100,40 @@ jobs:
         id: index
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.codeartifact-domain }}" ]; then
-            TOKEN=$(aws codeartifact get-authorization-token \
-              --domain "${{ inputs.codeartifact-domain }}" \
-              --region "${{ inputs.codeartifact-region }}" \
-              --query authToken --output text)
-            echo "::add-mask::$TOKEN"
-            ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-            # The CodeArtifact repo has `upstream public:pypi`, so public
-            # packages resolve through it too — no second index to configure.
-            echo "url=https://aws:$TOKEN@${{ inputs.codeartifact-repository }}-$ACCOUNT.d.codeartifact.${{ inputs.codeartifact-region }}.amazonaws.com/pypi/${{ inputs.codeartifact-repository }}/simple/" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "${{ inputs.codeartifact-domain }}" ]; then
             echo "url=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # The field is `authorizationToken`. `--query authToken` returns the
+          # literal string "None" and pip then 401s on a URL that looks
+          # perfectly well-formed -- the wrong name came from tessera-db's own
+          # PUBLISHING.md and cost a debugging session.
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain "${{ inputs.codeartifact-domain }}" \
+            --region "${{ inputs.codeartifact-region }}" \
+            --query authorizationToken --output text)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+            echo "::error::CodeArtifact returned no token. Check the role has"
+            echo "::error::codeartifact:GetAuthorizationToken and sts:GetServiceBearerToken."
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+
+          # ASKED FOR, not assembled. The host is <domain>-<account>, not
+          # <repository>-<account>, and building it by hand got that backwards:
+          # korz-642917032014..., never tessera-642917032014... A wrong host
+          # fails as "no matching distribution", which reads like a missing
+          # package rather than a wrong URL.
+          ENDPOINT=$(aws codeartifact get-repository-endpoint \
+            --domain "${{ inputs.codeartifact-domain }}" \
+            --repository "${{ inputs.codeartifact-repository }}" \
+            --region "${{ inputs.codeartifact-region }}" \
+            --format pypi --query repositoryEndpoint --output text)
+
+          # The repo has `upstream public:pypi`, so public packages resolve
+          # through it too and there is no second index to configure.
+          echo "url=${ENDPOINT/https:\/\//https://aws:$TOKEN@}simple/" >> "$GITHUB_OUTPUT"
 
       - name: Install
         # A venv in the workspace, always. See the header: without it this job

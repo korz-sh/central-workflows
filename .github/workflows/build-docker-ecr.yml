@@ -32,9 +32,12 @@ on:
           default) mints nothing and changes nothing. Set it when the image
           installs a package published to CodeArtifact rather than public PyPI
           (tessera-db is the first) — the token is minted with the AWS role this
-          job already assumed, passed as the CODEARTIFACT_AUTH_TOKEN build arg,
-          and expires in 12 hours. It never reaches the image: the Dockerfile
-          must consume it in an ARG, not an ENV.
+          job already assumed and expires in 12 hours. It is passed as a
+          BUILDKIT SECRET (id `codeartifact_token`), never as a build arg:
+          Docker records the args a RUN consumed in the image metadata, so a
+          build arg is readable with `docker history --no-trunc`. Measured, not
+          assumed. The Dockerfile consumes it with
+          `RUN --mount=type=secret,id=codeartifact_token`.
       codeartifact-region:
         required: false
         type: string
@@ -145,9 +148,20 @@ jobs:
           TOKEN=$(aws codeartifact get-authorization-token \
             --domain "${{ inputs.codeartifact-domain }}" \
             --region "${{ inputs.codeartifact-region }}" \
-            --query authToken --output text)
+            --query authorizationToken --output text)
+          # An empty token here is the failure mode this guard exists for.
+          # `--query authToken` (the field is authorizationToken) returns the
+          # literal string "None", and pip then 401s on a URL that looks
+          # perfectly well-formed. Caught on the first real run; the wrong name
+          # came from tessera-db's own PUBLISHING.md.
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+            echo "::error::CodeArtifact returned no token. Check the role has"
+            echo "::error::codeartifact:GetAuthorizationToken and sts:GetServiceBearerToken."
+            exit 1
+          fi
           # Masked before it is exported: without this the token appears in
-          # plain text in any `set -x` or buildx error further down.
+          # plain text in any `set -x` or buildx error further down. Masking
+          # protects the LOG; the BuildKit secret protects the image.
           echo "::add-mask::$TOKEN"
           echo "CODEARTIFACT_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
@@ -180,7 +194,11 @@ jobs:
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
             GITHUB_TOKEN=${{ inputs.pass-github-token-build-arg && (secrets.GH_PAT || secrets.GITHUB_TOKEN) || '' }}
-            CODEARTIFACT_AUTH_TOKEN=${{ env.CODEARTIFACT_AUTH_TOKEN }}
+          # A SECRET, not a build arg. See the input description: build args a
+          # RUN consumed are printed back by `docker history --no-trunc`.
+          # Empty when no domain was requested, which is the same as absent.
+          secrets: |
+            codeartifact_token=${{ env.CODEARTIFACT_AUTH_TOKEN }}
           tags: |
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
