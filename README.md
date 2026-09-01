@@ -73,10 +73,18 @@ jobs:
       dockerfile: Dockerfile.lambda  # optional, default: Dockerfile.lambda
       aws-region: us-east-2          # optional, default: us-east-2
       pass-github-token-build-arg: true  # optional, default: true
+      codeartifact-domain: korz          # optional — mint a pip token for the build
+      codeartifact-region: us-east-2     # optional, default: us-east-2
     secrets:
       AWS_ROLE_ARN_STAGING: ${{ secrets.AWS_ROLE_ARN_STAGING }}
       GH_PAT: ${{ secrets.GH_PAT }}  # optional
 ```
+
+`codeartifact-domain` is empty by default and mints nothing, so the existing
+callers are untouched. Set it when the Dockerfile installs a package published
+to CodeArtifact rather than public PyPI: the token is minted with the role this
+job already assumes, masked, and passed as the `CODEARTIFACT_AUTH_TOKEN` build
+arg. Consume it in an `ARG` — an `ENV` would bake a credential into the image.
 
 **Outputs:** `image-uri`, `image-tag`
 
@@ -142,6 +150,33 @@ jobs:
       run-type-check: false             # optional, default: false
     secrets: inherit
 ```
+
+#### `ci-python.yml`
+
+```yaml
+jobs:
+  ci:
+    uses: korz-sh/central-workflows/.github/workflows/ci-python.yml@main
+    with:
+      service-name: my-service              # required
+      python-version: '3.12'                # optional, default: 3.12
+      requirements: requirements-dev.txt    # optional
+      test-command: 'python -m pytest tests/ -q'   # optional
+      lint-command: ''                      # optional — empty skips the lint job
+      extra-checks: ''                      # optional — non-pytest gates
+      codeartifact-domain: korz             # optional — for private packages
+      codeartifact-repository: tessera      # optional
+    secrets: inherit
+```
+
+The venv is not a style choice: PEP 668 marks Debian's Python
+externally-managed, so a plain `pip install` dies on a self-hosted runner and
+succeeds on GitHub's image. Every Python repo here was hand-rolling the same
+six steps and had already drifted.
+
+`codeartifact-domain` mints a 12-hour pip token with the assumed AWS role, for
+packages published privately (`tessera-db`). Empty by default, so nothing
+changes for the repos that install only from public PyPI.
 
 ---
 

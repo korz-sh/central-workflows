@@ -1,0 +1,159 @@
+name: CI Python (Reusable)
+
+# The fourth language gate, after dotnet, go and node.
+#
+# It did not exist while Python was already the largest tested surface in the
+# org (agent-platform-api 146 test files, korz-store-api 37, korz-query-api 43).
+# Those three each hand-rolled the same six steps in their own build.yml, and
+# they had already drifted: two create a venv, one does not; one installs
+# pytest by name, another pins it in requirements-dev.
+#
+# The venv is not optional and is the reason a naive `pip install` fails here.
+# PEP 668 marks Debian's Python as externally-managed, so plain `pip` on a
+# self-hosted runner dies with `error: externally-managed-environment`. The
+# GitHub-hosted image does not, which is exactly the kind of difference that
+# turns a runner switch into a mystery.
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.12'
+      requirements:
+        required: false
+        type: string
+        default: 'requirements-dev.txt'
+        description: >-
+          The file installed before the tests run. Defaults to the dev set,
+          because a CI that installs only the runtime deps cannot run pytest.
+      test-command:
+        required: false
+        type: string
+        default: 'python -m pytest tests/ -q'
+      lint-command:
+        required: false
+        type: string
+        default: ''
+        description: 'Optional. Empty (the default) skips the lint job entirely.'
+      extra-checks:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Optional shell run after the tests, for gates that are not pytest —
+          an OpenAPI contract diff, a schema re-emission. korz-query-api runs
+          `python scripts/emit_openapi.py --check` here.
+      codeartifact-domain:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Set to install packages published to CodeArtifact instead of public
+          PyPI (tessera-db is the first). Needs AWS_ROLE_ARN_STAGING, since the
+          token is minted with that role.
+      codeartifact-repository:
+        required: false
+        type: string
+        default: ''
+      codeartifact-region:
+        required: false
+        type: string
+        default: 'us-east-2'
+    secrets:
+      AWS_ROLE_ARN_STAGING:
+        required: false
+        description: 'Only needed when codeartifact-domain is set.'
+
+jobs:
+  test:
+    # KOR-320: follows the runner switch like every other CI job. Pinned to
+    # ubuntu-latest it dies in three seconds while the hosted quota is out, and
+    # a required check that cannot run blocks every merge in the repo.
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    # id-token only when CodeArtifact is in play. Requesting it unconditionally
+    # is harmless but wrong to model: a workflow that always asks for an OIDC
+    # token reads as if it always deploys.
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Configure AWS credentials (CodeArtifact)
+        if: inputs.codeartifact-domain != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: ${{ inputs.codeartifact-region }}
+
+      - name: Resolve package index
+        id: index
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.codeartifact-domain }}" ]; then
+            TOKEN=$(aws codeartifact get-authorization-token \
+              --domain "${{ inputs.codeartifact-domain }}" \
+              --region "${{ inputs.codeartifact-region }}" \
+              --query authToken --output text)
+            echo "::add-mask::$TOKEN"
+            ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+            # The CodeArtifact repo has `upstream public:pypi`, so public
+            # packages resolve through it too — no second index to configure.
+            echo "url=https://aws:$TOKEN@${{ inputs.codeartifact-repository }}-$ACCOUNT.d.codeartifact.${{ inputs.codeartifact-region }}.amazonaws.com/pypi/${{ inputs.codeartifact-repository }}/simple/" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install
+        # A venv in the workspace, always. See the header: without it this job
+        # passes on GitHub's image and fails on a self-hosted runner, which is
+        # the worst possible place for that difference to live.
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          if [ -n "${{ steps.index.outputs.url }}" ]; then
+            .venv/bin/pip install --index-url "${{ steps.index.outputs.url }}" -r "${{ inputs.requirements }}"
+          else
+            .venv/bin/pip install -r "${{ inputs.requirements }}"
+          fi
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Test
+        run: ${{ inputs.test-command }}
+
+      # Gates that are not pytest. Kept separate on purpose: korz-query-api's
+      # contract check compares the committed openapi.json against one re-emitted
+      # from the live app, and both sides of a pytest-internal comparison come
+      # from the same app object — so only a step outside pytest can catch a
+      # stale committed file.
+      - name: Extra checks
+        if: inputs.extra-checks != ''
+        run: ${{ inputs.extra-checks }}
+
+  lint:
+    if: inputs.lint-command != ''
+    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Lint
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          ${{ inputs.lint-command }}

@@ -23,6 +23,23 @@ on:
         type: boolean
         default: true
         description: 'Pass GITHUB_ACTOR and GITHUB_TOKEN as Docker build args'
+      codeartifact-domain:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          CodeArtifact domain to mint a pip token for, e.g. `korz`. Empty (the
+          default) mints nothing and changes nothing. Set it when the image
+          installs a package published to CodeArtifact rather than public PyPI
+          (tessera-db is the first) — the token is minted with the AWS role this
+          job already assumed, passed as the CODEARTIFACT_AUTH_TOKEN build arg,
+          and expires in 12 hours. It never reaches the image: the Dockerfile
+          must consume it in an ARG, not an ENV.
+      codeartifact-region:
+        required: false
+        type: string
+        default: 'us-east-2'
+        description: 'Region of the CodeArtifact domain. Ignored when codeartifact-domain is empty.'
     secrets:
       AWS_ROLE_ARN_STAGING:
         required: true
@@ -114,6 +131,26 @@ jobs:
       - name: Set ECR registry
         run: echo "REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
 
+      # Minted only when a caller asks for it, so the six existing callers are
+      # untouched: no extra AWS call, no extra permission, no new failure mode.
+      #
+      # `aws codeartifact get-authorization-token` needs sts:GetServiceBearerToken
+      # on the assumed role. If the role lacks it this step FAILS the build,
+      # which is the correct outcome: the alternative is an image that builds
+      # green and dies on its first `import`.
+      - name: Mint CodeArtifact token
+        if: inputs.codeartifact-domain != ''
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain "${{ inputs.codeartifact-domain }}" \
+            --region "${{ inputs.codeartifact-region }}" \
+            --query authToken --output text)
+          # Masked before it is exported: without this the token appears in
+          # plain text in any `set -x` or buildx error further down.
+          echo "::add-mask::$TOKEN"
+          echo "CODEARTIFACT_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Generate version
         id: version
         run: |
@@ -143,6 +180,7 @@ jobs:
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
             GITHUB_TOKEN=${{ inputs.pass-github-token-build-arg && (secrets.GH_PAT || secrets.GITHUB_TOKEN) || '' }}
+            CODEARTIFACT_AUTH_TOKEN=${{ env.CODEARTIFACT_AUTH_TOKEN }}
           tags: |
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ inputs.ecr-repo }}:latest
