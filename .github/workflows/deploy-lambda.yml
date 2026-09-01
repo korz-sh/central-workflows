@@ -172,12 +172,16 @@ jobs:
               break
             fi
             echo "intento $intento falló, reintentando..."
-            cat /tmp/err.txt || true
+            # `[ -f ]` y no `|| true`: el gate de este repo prohíbe tragarse
+            # exit codes, y con razón — un `|| true` acá también escondería que
+            # cat falló por otro motivo. El archivo puede no existir si el aws
+            # cli murió antes de escribir nada, y eso es normal.
+            if [ -f /tmp/err.txt ]; then cat /tmp/err.txt; fi
             sleep 5
           done
 
           echo "--- respuesta ---"
-          head -c 500 /tmp/respuesta.json || true
+          if [ -f /tmp/respuesta.json ]; then head -c 500 /tmp/respuesta.json; fi
           echo
 
           # FunctionError significa que el código explotó: import roto, handler
