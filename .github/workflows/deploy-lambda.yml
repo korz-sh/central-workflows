@@ -238,6 +238,19 @@ jobs:
           # caída". Desplegar sobre una base inalcanzable no es un éxito: si el
           # deploy sigue, nadie mira. Prefiero un rojo que se explica en treinta
           # segundos a un verde que oculta un servicio que no puede responder.
+          #
+          # Verificado contra una imagen ROTA a propósito (un CMD que apunta a
+          # un módulo inexistente): construye perfecto, y al invocarla responde
+          # `{"errorMessage": "Unable to import module ..."}` sin `statusCode`.
+          # Este case la rechaza. Ese es exactamente el fallo que el paso existe
+          # para atrapar, y el que `wait function-updated` no ve.
+          #
+          # Los cinco casos, comprobados:
+          #   {"statusCode":200}  -> pasa
+          #   {"statusCode":204}  -> pasa
+          #   {"statusCode":301}  -> falla
+          #   {"errorMessage":..} -> falla (sin statusCode)
+          #   respuesta no-JSON   -> falla
           status="$(python3 -c "import json;print(json.load(open('/tmp/respuesta.json')).get('statusCode',''))" 2>/dev/null || echo "")"
           case "$status" in
             2*) ;;
