@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          payload="$(printf '%s' '{"version":"2.0","rawPath":"'"${HEALTH_PATH}"'","rawQueryString":"","requestContext":{"http":{"method":"GET","path":"'"${HEALTH_PATH}"'","sourceIp":"127.0.0.1","protocol":"HTTP/1.1","userAgent":"deploy-smoke"},"requestId":"deploy-smoke","stage":"$default","apiId":"smoke","domainName":"smoke","accountId":"0","time":"x","timeEpoch":0},"headers":{},"isBase64Encoded":false}' | base64 -w0)"
+          payload="$(printf '%s' '{"version":"2.0","rawPath":"'"${HEALTH_PATH}"'","rawQueryString":"","requestContext":{"http":{"method":"GET","path":"'"${HEALTH_PATH}"'","sourceIp":"127.0.0.1","protocol":"HTTP/1.1","userAgent":"deploy-smoke"},"requestId":"deploy-smoke","stage":"$default","apiId":"smoke","domainName":"smoke","accountId":"0","time":"x","timeEpoch":0},"headers":{"host":"localhost"},"isBase64Encoded":false}' | base64 -w0)"
 
           # Hasta 5 intentos: el primer invoke paga el cold start de una imagen
           # recién publicada y puede pasarse del timeout del cliente.
@@ -222,17 +222,32 @@ jobs:
             exit 1
           fi
 
-          # Un 404 significa que este chequeo no probó nada.
+          # Un /health que no responde 2xx es un chequeo que no probó nada.
           #
-          # Pasó de verdad: payments-service-api monta todo bajo `/internal`, así
-          # que `/health` daba 404 y el paso decía "la función arranca y
-          # responde" — cuando lo único que se había comprobado es que el runtime
-          # devuelve errores HTTP. Una imagen con la app rota daría el mismo 404.
-          if grep -q '"statusCode": *404' /tmp/respuesta.json 2>/dev/null; then
-            echo "::error::${HEALTH_PATH} devolvió 404: ese path no existe en este servicio."
-            echo "::error::Un 404 no prueba que la app arrancó. Pasá health-path al workflow."
-            exit 1
-          fi
+          # Empezó como un guard contra el 404 —payments-service-api monta todo
+          # bajo `/internal`, así que `/health` no existía y el paso igual decía
+          # "la función arranca y responde"— y se generalizó cuando rbac-api
+          # devolvió un 400 "Invalid Hostname" y también pasó.
+          #
+          # Los dos casos son el mismo: lo único comprobado es que el runtime
+          # sabe devolver errores HTTP, y eso lo hace igual una imagen con la app
+          # completamente rota. Un /health sano devuelve 200.
+          #
+          # El 503 también falla, y es un cambio respecto de la primera versión
+          # de este paso, que lo dejaba pasar como "arrancó pero la base está
+          # caída". Desplegar sobre una base inalcanzable no es un éxito: si el
+          # deploy sigue, nadie mira. Prefiero un rojo que se explica en treinta
+          # segundos a un verde que oculta un servicio que no puede responder.
+          status="$(python3 -c "import json;print(json.load(open('/tmp/respuesta.json')).get('statusCode',''))" 2>/dev/null || echo "")"
+          case "$status" in
+            2*) ;;
+            *)
+              echo "::error::${HEALTH_PATH} devolvió ${status:-sin statusCode}, no un 2xx."
+              echo "::error::Eso no prueba que la app arrancó: un error HTTP lo devuelve"
+              echo "::error::igual una imagen rota. Si el path es otro, pasá health-path."
+              exit 1
+              ;;
+          esac
 
           echo "✅ La función arranca y responde."
 
