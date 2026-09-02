@@ -7,6 +7,15 @@ on:
         required: true
         type: string
         description: 'Image name, e.g. web-api, entitlement-api'
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+        description: >-
+          Ruta al Dockerfile. El default asume un `Dockerfile` pelado en la raíz,
+          que es lo que tenían los repos de Node. Los que se portaron a Python
+          despachan una imagen de Lambda y ya no tienen ese archivo: sin este
+          input, el build muere con "failed to read dockerfile".
       build-args:
         required: false
         type: string
@@ -70,6 +79,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ inputs.dockerfile }}
           push: true
           tags: |
             ghcr.io/korz-sh/${{ inputs.image-name }}:latest
