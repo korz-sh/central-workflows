@@ -16,6 +16,15 @@ on:
           que es lo que tenían los repos de Node. Los que se portaron a Python
           despachan una imagen de Lambda y ya no tienen ese archivo: sin este
           input, el build muere con "failed to read dockerfile".
+
+          OJO: este default (`Dockerfile`) NO es el mismo que el de
+          build-docker-ecr.yml (`Dockerfile.lambda`). Los dos son correctos para
+          su historia —GHCR nació sirviendo repos de Node, ECR nació sirviendo
+          Lambdas— pero un repo que use los dos y declare el input en uno solo
+          termina construyendo archivos distintos en cada pipeline. Hoy no pasa
+          (verificado 2026-09-02: payments declara el input en los dos, identity
+          usa el default en ambos y tiene los dos archivos), y este comentario
+          existe para que el próximo lo mire antes de suponer.
       build-args:
         required: false
         type: string
