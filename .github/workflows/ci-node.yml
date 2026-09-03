@@ -46,15 +46,15 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup pnpm
         if: ${{ inputs.package-manager == 'pnpm' }}
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ inputs.pnpm-version }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
@@ -69,15 +69,15 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup pnpm
         if: ${{ inputs.package-manager == 'pnpm' }}
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ inputs.pnpm-version }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
@@ -88,13 +88,13 @@ jobs:
       # Kept from node-pr-check.yml's `test` job: that was the only place
       # coverage reached codecov, and folding the file in without this step
       # would have removed the upload without anyone noticing.
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v7
         with:
           files: ./coverage/lcov.info
           flags: ${{ inputs.codecov-flag }}
           fail_ci_if_error: false
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-node-${{ inputs.service-name }}
@@ -111,8 +111,8 @@ jobs:
       # consumed by a step in this same job, which is why it was never an output.
       percentage: ${{ steps.coverage.outputs.percentage }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-node-${{ inputs.service-name }}
           path: coverage/

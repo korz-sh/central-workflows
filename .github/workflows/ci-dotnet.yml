@@ -46,8 +46,8 @@ jobs:
     # until the 6h default, and the pool is shared across 13 repos.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
           # NO `cache: true` here, deliberately, and it is not an oversight.
@@ -152,7 +152,7 @@ jobs:
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           reportgenerator -reports:"TestResults/*/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:"Cobertura;JsonSummary;Html"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-dotnet-${{ inputs.service-name }}
@@ -167,8 +167,8 @@ jobs:
     if: always()
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-dotnet-${{ inputs.service-name }}
 

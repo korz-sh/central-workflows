@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 1. Every workflow must parse. A YAML error here is invisible until it
       #    reaches a consumer, because a reusable workflow is never run in place.
