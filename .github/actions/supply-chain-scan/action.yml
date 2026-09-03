@@ -47,7 +47,7 @@ runs:
     # someone adds a csproj without one, or deletes them. This makes it loud.
     - name: Setup .NET for the lockfile check
       if: inputs.dotnet-lockfile-check == 'true'
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
         # No `cache: true`. It was tried and it broke ci-dotnet's restore: the

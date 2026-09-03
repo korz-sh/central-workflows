@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # v5 for the maintained action, but with its caching OFF.
       #
       # v5 caches by default, and that default is actively harmful here:
@@ -34,7 +34,7 @@ jobs:
       # Nothing is lost: every consumer runs on a PERSISTENT self-hosted runner
       # (KOR-320), so ~/go/pkg/mod is already warm between jobs. actions/cache
       # solves a problem that only exists on ephemeral hosted runners.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ inputs.go-version }}
           cache: false
@@ -74,7 +74,7 @@ jobs:
       # to 1.64.8. v7 is the first action release that accepts golangci-lint v2.
       # Renovate can move this pin; "latest" cannot, because it does not mean
       # what it looks like it means.
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
 
@@ -82,11 +82,11 @@ jobs:
     runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # cache: false — actions/cache restores with `tar -P` into the workspace
       # and ate the checkout in ci-dotnet (see the note there). Go’s module
       # cache is already warm between jobs on a persistent self-hosted runner.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ inputs.go-version }}
           cache: false
@@ -94,11 +94,19 @@ jobs:
       # Kept from go-pr-check's `test` job, which is deleted in this change: it
       # was the only place coverage reached codecov, and dropping it here would
       # have removed that signal silently.
-      - uses: codecov/codecov-action@v3
+      #
+      # `fail_ci_if_error: false` explícito, igual que en ci-node.yml. Desde la v4
+      # codecov exige CODECOV_TOKEN para subir, y en esta org no está configurado
+      # en ningún lado — así que el upload no puede funcionar. Que eso no ponga en
+      # rojo un CI cuyos tests pasaron: el valor de este paso es la cobertura, no
+      # ser una compuerta. Si algún día se configura el token, esta línea se saca
+      # y el fallo vuelve a significar algo.
+      - uses: codecov/codecov-action@v7
         with:
           files: ./coverage.out
+          fail_ci_if_error: false
       - run: go tool cover -html=coverage.out -o coverage.html
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-go-${{ inputs.service-name }}
@@ -115,15 +123,15 @@ jobs:
       # consumed by a step in this same job, which is why it was never an output.
       percentage: ${{ steps.coverage.outputs.percentage }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # cache: false — actions/cache restores with `tar -P` into the workspace
       # and ate the checkout in ci-dotnet (see the note there). Go’s module
       # cache is already warm between jobs on a persistent self-hosted runner.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ inputs.go-version }}
           cache: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-go-${{ inputs.service-name }}
 
