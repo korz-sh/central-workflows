@@ -12,7 +12,7 @@ The CI hub of the org. **12 files, no application code**: 9 workflows under
 `.github/workflows/` and 2 composite actions under `.github/actions/`, plus the README.
 
 Every other korz repo reaches into this one — a consumer's CI is one line pointing back here
-(`entitlement-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main").
+(`rbac-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main").
 Two different mechanisms, and the difference matters:
 
 | Mechanism | Files | Who calls it (verified by grep across the sibling checkouts) |
@@ -20,7 +20,7 @@ Two different mechanisms, and the difference matters:
 | **Composite action** (`uses: korz-sh/central-workflows/.github/actions/…@main` **in a step**) | `semgrep-scan`, `supply-chain-scan` | **12 repos** — agent-platform-api, entitlement-api, identity-api-v2, infraestructure, korz-code, korz-query-api, mcp-servers, payments-service-api, rbac-api, shared-contracts, web-api, web-client — plus this repo's own `security.yml` (13 copies of `security.yml` total) |
 | **Reusable workflow** (`uses: …@main` **as a job**) | `build-docker-ecr` | 6 repos, 7 call sites (korz-query-api calls it twice) |
 | | `deploy-lambda` | 6 repos: entitlement-api, identity-api-v2, korz-query-api, payments-service-api, rbac-api, web-api |
-| | `ci-dotnet` | 3: entitlement-api, rbac-api, web-api |
+| | `ci-dotnet` | 2: rbac-api, web-api (entitlement-api lo dejó el 2026-09-03, al borrar su C#) |
 | | `publish-ghcr` | 2: identity-api-v2, payments-service-api |
 | | `ci-go` | 1: identity-api-v2 |
 | | `ci-node` | 1: payments-service-api |
@@ -279,4 +279,6 @@ gh api /orgs/korz-sh/rulesets/20664553
   exception it makes is `VAR=$(cmd || echo "")`.
 - **Anything at all** → remember there is no staging. The merge is the release, to 12 repos that
   all pin the default branch — e.g.
-  `entitlement-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main".
+  `rbac-api/.github/workflows/ci.yml` — "korz-sh/central-workflows/.github/workflows/ci-dotnet.yml@main".
+  (Las dos citas apuntaban a entitlement-api hasta el 2026-09-03, cuando ese repo borró su C# y dejó
+  de consumir `ci-dotnet`. Quedan **dos** consumidores, no tres: rbac-api y web-api.)
