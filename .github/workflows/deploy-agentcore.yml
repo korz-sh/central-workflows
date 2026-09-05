@@ -1,0 +1,222 @@
+# Deploy de un agente a Bedrock AgentCore Runtime.
+#
+# El equivalente de deploy-lambda.yml para los agentes. Hace UNA cosa: apuntar
+# un runtime que ya existe a una imagen nueva. No lo crea — el runtime, su rol
+# y su configuración los owna terraform (infraestructure/app/stacks/
+# agent-runtimes). Acá sólo se mueve la imagen, igual que deploy-lambda mueve
+# el `image_uri` de una Lambda que terraform declaró.
+#
+# ── LAS DOS TRAMPAS, Y POR QUÉ ESTE WORKFLOW ES MÁS LARGO DE LO ESPERABLE ───
+#
+# 1. `UpdateAgentRuntime` PIERDE los campos que no le mandás.
+#
+#    No es un PATCH: es un PUT. Si mandás sólo el `containerUri`, el runtime se
+#    queda sin `protocolConfiguration` y sin sus variables de entorno, y deja de
+#    responder — con un deploy que salió verde. Por eso el paso `read` lee el
+#    runtime vivo primero y el `update` le devuelve TODO lo que leyó.
+#
+#    Es exactamente lo que documenta la implementación de referencia
+#    (datalake-agentcore): "el deploy no decide el protocolo: lee el
+#    protocolConfiguration del runtime vivo y se lo devuelve tal cual, porque
+#    UpdateAgentRuntime lo perdería".
+#
+# 2. Un 200 de la API NO significa que el runtime esté corriendo la imagen.
+#
+#    `UpdateAgentRuntime` devuelve enseguida; el runtime tarda en pasar a READY,
+#    y puede quedar en CREATE_FAILED con el deploy ya en verde. Por eso el paso
+#    `verify` espera el estado terminal Y compara el `containerUri` vivo contra
+#    el que se pidió. Un deploy que miente es peor que uno que falla: la señal
+#    de que algo anda mal aparece recién cuando alguien usa el agente.
+
+name: Deploy AgentCore
+
+on:
+  workflow_call:
+    inputs:
+      runtime-id:
+        required: true
+        type: string
+        description: 'ID del runtime, p.ej. korz_staging_planner_agent-aCS8tX7nr2'
+      image-uri:
+        required: true
+        type: string
+        description: 'La imagen a desplegar, con tag inmutable (NO :latest)'
+      aws-region:
+        required: false
+        type: string
+        default: 'us-east-2'
+      wait-seconds:
+        required: false
+        type: number
+        default: 300
+        description: 'Cuánto esperar a que el runtime llegue a un estado terminal'
+    secrets:
+      AWS_ROLE_ARN_STAGING:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ${{ vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 20
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # ── 1. Leer el runtime vivo ──────────────────────────────────────────
+      - name: Leer la configuración actual del runtime
+        id: read
+        env:
+          RID: ${{ inputs.runtime-id }}
+          REGION: ${{ inputs.aws-region }}
+        run: |
+          set -euo pipefail
+
+          aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id "$RID" --region "$REGION" > live.json
+
+          # Estos tres se PIERDEN si no se reenvían. Ver la cabecera.
+          jq -c '.protocolConfiguration' live.json > proto.json
+          jq -c '.networkConfiguration'  live.json > net.json
+          jq -c '.environmentVariables // {}' live.json > env.json
+          ROLE=$(jq -r '.roleArn' live.json)
+          OLD=$(jq -r '.agentRuntimeArtifact.containerConfiguration.containerUri' live.json)
+
+          echo "role=$ROLE"      >> "$GITHUB_OUTPUT"
+          echo "old-image=$OLD"  >> "$GITHUB_OUTPUT"
+
+          echo "### Runtime antes del deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- imagen: \`$OLD\`"           >> "$GITHUB_STEP_SUMMARY"
+          echo "- protocolo: \`$(cat proto.json)\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 2. Rechazar :latest ──────────────────────────────────────────────
+      - name: Exigir un tag inmutable
+        env:
+          IMAGE: ${{ inputs.image-uri }}
+        run: |
+          set -euo pipefail
+          case "$IMAGE" in
+            *:latest)
+              echo "::error::se pidió desplegar '$IMAGE'. Un tag móvil hace que"
+              echo "::error::el runtime y el registro puedan discrepar sin que"
+              echo "::error::nada lo note, y vuelve imposible saber qué está"
+              echo "::error::corriendo. Usá el tag con SHA o timestamp."
+              exit 1
+              ;;
+          esac
+
+      # ── 3. Actualizar, devolviendo TODO lo leído ─────────────────────────
+      - name: Actualizar el runtime
+        env:
+          RID: ${{ inputs.runtime-id }}
+          REGION: ${{ inputs.aws-region }}
+          IMAGE: ${{ inputs.image-uri }}
+          ROLE: ${{ steps.read.outputs.role }}
+        run: |
+          set -euo pipefail
+
+          aws bedrock-agentcore-control update-agent-runtime \
+            --agent-runtime-id "$RID" \
+            --region "$REGION" \
+            --role-arn "$ROLE" \
+            --agent-runtime-artifact "$(jq -nc --arg u "$IMAGE" \
+                '{containerConfiguration:{containerUri:$u}}')" \
+            --network-configuration "file://net.json" \
+            --protocol-configuration "file://proto.json" \
+            --environment-variables "file://env.json" \
+            > updated.json
+
+          echo "versión nueva: $(jq -r '.agentRuntimeVersion' updated.json)"
+
+      # ── 4. Verificar que quedó corriendo LO QUE SE PIDIÓ ─────────────────
+      - name: Esperar READY y confirmar la imagen
+        env:
+          RID: ${{ inputs.runtime-id }}
+          REGION: ${{ inputs.aws-region }}
+          IMAGE: ${{ inputs.image-uri }}
+          DEADLINE: ${{ inputs.wait-seconds }}
+        run: |
+          set -euo pipefail
+
+          elapsed=0
+          while [ "$elapsed" -lt "$DEADLINE" ]; do
+            aws bedrock-agentcore-control get-agent-runtime \
+              --agent-runtime-id "$RID" --region "$REGION" > now.json
+            STATUS=$(jq -r '.status' now.json)
+
+            case "$STATUS" in
+              READY) break ;;
+              CREATE_FAILED|UPDATE_FAILED|DELETING)
+                echo "::error::el runtime terminó en $STATUS"
+                jq . now.json
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+            elapsed=$((elapsed + 10))
+          done
+
+          if [ "$STATUS" != "READY" ]; then
+            echo "::error::el runtime sigue en $STATUS después de ${DEADLINE}s"
+            exit 1
+          fi
+
+          # El chequeo que impide un deploy que miente: la API dijo 200, pero
+          # ¿está corriendo la imagen que pedimos?
+          RUNNING=$(jq -r '.agentRuntimeArtifact.containerConfiguration.containerUri' now.json)
+          if [ "$RUNNING" != "$IMAGE" ]; then
+            echo "::error::el runtime está READY pero con OTRA imagen."
+            echo "::error::  pedida:    $IMAGE"
+            echo "::error::  corriendo: $RUNNING"
+            exit 1
+          fi
+
+          # Y que no se haya perdido el protocolo en el camino.
+          PROTO=$(jq -r '.protocolConfiguration.serverProtocol // "AUSENTE"' now.json)
+          if [ "$PROTO" = "AUSENTE" ]; then
+            echo "::error::el runtime quedó sin protocolConfiguration."
+            echo "::error::UpdateAgentRuntime lo perdió — el paso de lectura no"
+            echo "::error::se lo devolvió. Ver la cabecera de este workflow."
+            exit 1
+          fi
+
+          {
+            echo "### Deploy confirmado"
+            echo "- imagen: \`$RUNNING\`"
+            echo "- versión: \`$(jq -r '.agentRuntimeVersion' now.json)\`"
+            echo "- protocolo: \`$PROTO\` (preservado)"
+            echo "- estado: \`$STATUS\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 5. Avisar ────────────────────────────────────────────────────────
+      #
+      # Ocho repos ya notifican a Discord desde deploy-lambda y web-client no lo
+      # hacía — se descubrió cuando un deploy falló en silencio. No repetir eso
+      # acá desde el primer día.
+      - name: Leer el webhook de Discord
+        id: discord
+        if: always()
+        continue-on-error: true
+        run: |
+          WEBHOOK=$(aws ssm get-parameter \
+            --name /korz/discord-webhook-url \
+            --with-decryption \
+            --query 'Parameter.Value' --output text 2>/dev/null || true)
+          echo "::add-mask::$WEBHOOK"
+          echo "webhook=$WEBHOOK" >> "$GITHUB_OUTPUT"
+
+      - name: Notificar a Discord
+        if: always() && steps.discord.outputs.webhook != ''
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ steps.discord.outputs.webhook }}
+          title: 'AgentCore · ${{ inputs.runtime-id }}'
+          description: |
+            imagen: `${{ inputs.image-uri }}`
+          nofail: true
