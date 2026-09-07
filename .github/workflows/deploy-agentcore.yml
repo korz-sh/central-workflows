@@ -210,9 +210,16 @@ jobs:
         # existe, el paso falla, el job sigue, y el `webhook` queda vacio, con
         # lo cual el paso de notificar se saltea solo.
         run: |
+          # --region us-east-1 A PROPOSITO, y no el de este workflow: los
+          # parametros de Discord viven SOLO en us-east-1 y el rol de CI tiene
+          # el permiso acotado a esa region. Sin esto el paso muere con
+          # AccessDeniedException sobre un ARN de us-east-2 — que es lo que paso
+          # en el primer deploy real de korz-agents. deploy-lambda.yml ya lo
+          # pasa; este workflow se escribio sin mirarlo.
           WEBHOOK=$(aws ssm get-parameter \
             --name /korz/discord-webhook-url \
             --with-decryption \
+            --region us-east-1 \
             --query 'Parameter.Value' --output text)
           echo "::add-mask::$WEBHOOK"
           echo "webhook=$WEBHOOK" >> "$GITHUB_OUTPUT"
