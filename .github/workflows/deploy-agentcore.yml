@@ -15,6 +15,12 @@
 #    responder — con un deploy que salió verde. Por eso el paso `read` lee el
 #    runtime vivo primero y el `update` le devuelve TODO lo que leyó.
 #
+#    "TODO" cuesta más de lo que parece: la primera versión de este workflow
+#    reenviaba tres campos y se comía `description`. Lo encontró un
+#    `terraform plan` en CI, no una persona — un runtime sin description
+#    funciona igual, así que no hay síntoma que mirar. Si algún día
+#    UpdateAgentRuntime acepta un campo nuevo, va a pasar de nuevo.
+#
 #    Es exactamente lo que documenta la implementación de referencia
 #    (datalake-agentcore): "el deploy no decide el protocolo: lee el
 #    protocolConfiguration del runtime vivo y se lo devuelve tal cual, porque
@@ -80,15 +86,24 @@ jobs:
           aws bedrock-agentcore-control get-agent-runtime \
             --agent-runtime-id "$RID" --region "$REGION" > live.json
 
-          # Estos tres se PIERDEN si no se reenvían. Ver la cabecera.
+          # Estos CUATRO se PIERDEN si no se reenvían. Ver la cabecera.
           jq -c '.protocolConfiguration' live.json > proto.json
           jq -c '.networkConfiguration'  live.json > net.json
           jq -c '.environmentVariables // {}' live.json > env.json
           ROLE=$(jq -r '.roleArn' live.json)
           OLD=$(jq -r '.agentRuntimeArtifact.containerConfiguration.containerUri' live.json)
+          # `description` es el cuarto, y se descubrio tarde: un plan de
+          # terraform sobre el runtime vivo mostro que terraform queria volver a
+          # ponerla porque este deploy se la habia comido. Sin ese plan nadie lo
+          # hubiera visto: un runtime sin description funciona igual.
+          #
+          # Puede no existir, y mandar --description "" borraria una que si
+          # existe en otro runtime. Por eso el flag se arma condicional.
+          DESC=$(jq -r '.description // ""' live.json)
 
           echo "role=$ROLE"      >> "$GITHUB_OUTPUT"
           echo "old-image=$OLD"  >> "$GITHUB_OUTPUT"
+          echo "description=$DESC" >> "$GITHUB_OUTPUT"
 
           echo "### Runtime antes del deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "- imagen: \`$OLD\`"           >> "$GITHUB_STEP_SUMMARY"
@@ -117,8 +132,20 @@ jobs:
           REGION: ${{ inputs.aws-region }}
           IMAGE: ${{ inputs.image-uri }}
           ROLE: ${{ steps.read.outputs.role }}
+          DESC: ${{ steps.read.outputs.description }}
         run: |
           set -euo pipefail
+
+          # Array y no string: una description con espacios se partiria en
+          # varios argumentos si se interpolara a mano.
+          #
+          # `if` y no `[ -n "$DESC" ] && ...`: con set -e, un && cuya condicion
+          # da falso siendo el ultimo comando mata el script. El deploy fallaria
+          # justo cuando el runtime NO tiene description, que es el caso comun.
+          EXTRA=()
+          if [ -n "$DESC" ]; then
+            EXTRA+=(--description "$DESC")
+          fi
 
           aws bedrock-agentcore-control update-agent-runtime \
             --agent-runtime-id "$RID" \
@@ -129,6 +156,7 @@ jobs:
             --network-configuration "file://net.json" \
             --protocol-configuration "file://proto.json" \
             --environment-variables "file://env.json" \
+            ${EXTRA[@]+"${EXTRA[@]}"} \
             > updated.json
 
           echo "versión nueva: $(jq -r '.agentRuntimeVersion' updated.json)"
