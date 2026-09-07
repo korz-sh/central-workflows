@@ -219,3 +219,9 @@ jobs:
               print(f"  {f}: workflow_call with no inputs and no secrets")
           sys.exit(1 if bad else 0)
           PY
+
+      - name: Runner routing regression tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/routing-tests"
+          "$RUNNER_TEMP/routing-tests/bin/pip" install pytest
+          "$RUNNER_TEMP/routing-tests/bin/python" -m pytest scripts -q

@@ -74,7 +74,7 @@ jobs:
     # KOR-320: follows the runner switch like every other CI job. Pinned to
     # ubuntu-latest it dies in three seconds while the hosted quota is out, and
     # a required check that cannot run blocks every merge in the repo.
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     # id-token only when CodeArtifact is in play. Requesting it unconditionally
     # is harmless but wrong to model: a workflow that always asks for an OIDC
     # token reads as if it always deploys.
@@ -163,7 +163,7 @@ jobs:
 
   lint:
     if: inputs.lint-command != ''
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       contents: read
     timeout-minutes: 10

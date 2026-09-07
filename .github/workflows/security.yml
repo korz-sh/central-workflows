@@ -52,12 +52,8 @@ concurrency:
 jobs:
   sast:
     name: sast
-    # BUILD runners, not the test runners: `container:` needs a Docker daemon,
-    # and KORZ_RUNNER_LABELS points at Fargate runners that have none (seccomp
-    # blocks every rootless engine — probed live). Same fix as web-client #94,
-    # which this template briefly overwrote on 2026-08-31.
-    runs-on: ${{ vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
-    container: semgrep/semgrep:1.172.0
+    # Native Semgrep: hosted-first when enabled, otherwise the security profile.
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || vars.KORZ_SECURITY_RUNNER_LABELS != '' && fromJSON(vars.KORZ_SECURITY_RUNNER_LABELS) || vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
     # Nothing in this org had a timeout before. A hung job on a self-hosted
     # runner holds the runner until the 6h default.
     timeout-minutes: 15
@@ -87,7 +83,7 @@ jobs:
   supply-chain:
     name: supply-chain
     # KOR-320, same as above.
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -115,7 +111,7 @@ jobs:
     name: gate
     needs: [sast, supply-chain]
     if: always()
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || vars.KORZ_UTILITY_RUNNER_LABELS != '' && fromJSON(vars.KORZ_UTILITY_RUNNER_LABELS) || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - name: Every scan must have actually run

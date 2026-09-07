@@ -1,0 +1,36 @@
+name: Runner canary
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: Runner backend to verify
+        type: choice
+        options: [github, aws]
+        default: github
+        required: true
+permissions:
+  contents: read
+jobs:
+  utility:
+    runs-on: ${{ inputs.backend == 'github' && 'ubuntu-latest' || 'korz-cloud-utility' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Administrative tools work
+        run: |
+          set -euo pipefail
+          git --version
+          gh --version
+          jq --version
+          aws --version
+          python3 --version
+  security:
+    runs-on: ${{ inputs.backend == 'github' && 'ubuntu-latest' || 'korz-cloud-security' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/semgrep-scan
+        with:
+          exclude-rules: >-
+            yaml.github-actions.security.run-shell-injection.run-shell-injection
+            yaml.github-actions.security.secrets-inherit.secrets-inherit

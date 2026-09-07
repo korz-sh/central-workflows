@@ -43,7 +43,7 @@ jobs:
   # the `test` job below, so every PR installed dependencies four times across
   # four runners and ran the Jest suite twice.
   validate:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -66,7 +66,7 @@ jobs:
       - run: ${{ inputs.package-manager == 'pnpm' && 'pnpm run build' || 'npm run build' }}
 
   test:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -102,7 +102,7 @@ jobs:
           retention-days: 1
 
   coverage:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
     timeout-minutes: 10

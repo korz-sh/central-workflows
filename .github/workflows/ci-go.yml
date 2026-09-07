@@ -19,7 +19,7 @@ jobs:
   # straight duplicate of the `test` job below, so every PR ran the Go suite
   # twice -- with -race, the expensive way, both times.
   validate:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -79,7 +79,7 @@ jobs:
           version: v2.12.2
 
   test:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -114,7 +114,7 @@ jobs:
           retention-days: 1
 
   coverage:
-    runs-on: ${{ fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || fromJSON(vars.KORZ_RUNNER_LABELS || '"ubuntu-latest"') }}
     needs: test
     if: always()
     timeout-minutes: 10

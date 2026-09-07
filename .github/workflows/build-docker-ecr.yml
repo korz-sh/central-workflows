@@ -107,7 +107,7 @@ jobs:
     # NO evalúa ${{ }} dentro de valores de variables, así que el formato se
     # arma acá con format(). Sin esa var, KORZ_BUILD_RUNNER_LABELS como
     # siempre, y sin ninguna, ubuntu-latest.
-    runs-on: ${{ vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github') && 'ubuntu-latest' || vars.KORZ_CODEBUILD_PROJECT != '' && format('codebuild-{0}-{1}-{2}', vars.KORZ_CODEBUILD_PROJECT, github.run_id, github.run_attempt) || fromJSON(vars.KORZ_BUILD_RUNNER_LABELS || '"ubuntu-latest"') }}
     permissions:
       contents: write
       id-token: write
