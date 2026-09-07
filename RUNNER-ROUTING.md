@@ -8,6 +8,8 @@ Public repositories always select free standard Ubuntu hosted runners. For priva
 | `KORZ_UTILITY_RUNNER_LABELS` | `"korz-cloud-utility"` (JSON string) | Administrative jobs, 0.5 CPU / 1 GB |
 | `KORZ_RUNNER_BACKEND` | `github` or `aws` | Automatic preference; unset preserves existing routing |
 
+Run `Runner canary` from the private infraestructure repository to exercise either backend. The public central-workflows dispatch only uses GitHub: the AWS runner group intentionally accepts private repositories only.
+
 ## Activation order
 
 1. In infraestructure, build and push `base` and `security` with `app/stacks/ci-runners/image/build-push.sh`, then review and apply the ci-runners Terraform plan. Routing is disabled by default.

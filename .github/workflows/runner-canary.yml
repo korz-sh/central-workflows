@@ -1,11 +1,16 @@
 name: Runner canary
 on:
+  workflow_call:
+    inputs:
+      backend:
+        type: string
+        default: github
   workflow_dispatch:
     inputs:
       backend:
         description: Runner backend to verify
         type: choice
-        options: [github, aws]
+        options: [github]
         default: github
         required: true
 permissions:
@@ -29,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/semgrep-scan
+      - uses: korz-sh/central-workflows/.github/actions/semgrep-scan@main
         with:
           exclude-rules: >-
             yaml.github-actions.security.run-shell-injection.run-shell-injection
