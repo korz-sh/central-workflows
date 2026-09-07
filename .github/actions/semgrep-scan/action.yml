@@ -12,8 +12,8 @@ description: >
 # with the PR that made the change. A composite action runs inside the caller's
 # own job, so the check name stays `sast` and no ruleset edit is needed.
 #
-# The job-level `container:` stays in the caller: a composite action cannot
-# declare one.
+# Callers may use a native security runner or keep their existing container.
+# The setup step supplies the pinned CLI when the runner does not have it.
 
 inputs:
   lang:
@@ -34,6 +34,20 @@ inputs:
 runs:
   using: composite
   steps:
+    # Native on both hosted and Fargate runners. The security image already
+    # contains this version; other runners install it in an isolated environment.
+    - name: Ensure Semgrep is available
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=1.172.0
+        if command -v semgrep >/dev/null && [ "$(semgrep --version)" = "$version" ]; then
+          exit 0
+        fi
+        python3 -m venv "$RUNNER_TEMP/semgrep"
+        "$RUNNER_TEMP/semgrep/bin/pip" install --disable-pip-version-check "semgrep==$version"
+        echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
+
     # Text output on purpose -- no --quiet, no --json. The summary prints
     # "Parsed lines", "Targets scanned" and the skipped files. A scan that failed
     # to parse half the codebase still exits green, and without that summary the
