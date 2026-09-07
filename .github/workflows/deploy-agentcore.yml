@@ -203,11 +203,17 @@ jobs:
         id: discord
         if: always()
         continue-on-error: true
+        # SIN `|| true`. El linter de este repo lo prohibe y tiene razon: un
+        # exit code tragado esconde TODOS los fallos del paso, no solo el que
+        # uno tenia en mente. `continue-on-error` arriba ya dice que este paso
+        # es opcional, que es el mecanismo correcto — si el parametro no
+        # existe, el paso falla, el job sigue, y el `webhook` queda vacio, con
+        # lo cual el paso de notificar se saltea solo.
         run: |
           WEBHOOK=$(aws ssm get-parameter \
             --name /korz/discord-webhook-url \
             --with-decryption \
-            --query 'Parameter.Value' --output text 2>/dev/null || true)
+            --query 'Parameter.Value' --output text)
           echo "::add-mask::$WEBHOOK"
           echo "webhook=$WEBHOOK" >> "$GITHUB_OUTPUT"
 
