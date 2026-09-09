@@ -265,30 +265,94 @@ jobs:
           STATUS: ${{ job.status }}
           RUNTIME: ${{ inputs.runtime-id }}
           IMAGE: ${{ inputs.image-uri }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          # Lo que se muestra es lo que CAMBIA entre un deploy y el siguiente.
+          #
+          # La URI entera de ECR es
+          # 642917032014.dkr.ecr.us-east-2.amazonaws.com/korz-agents:<tag>, y de
+          # esos 60 caracteres los primeros 50 son idénticos en todos los
+          # deploys de la historia. Puestos en el mensaje empujan el tag —lo
+          # único que distingue este deploy del anterior— al final de una línea
+          # que envuelve. Queda `repo:tag`.
+          IMAGE_SHORT="${IMAGE##*/}"
+
+          # El runtime-id es <nombre>-<id de AgentCore>. El nombre dice qué
+          # agente es; el sufijo sólo sirve para pegarlo en la consola de AWS,
+          # así que va al pie y no en el título.
+          RUNTIME_NAME="${RUNTIME%-*}"
+          RUNTIME_ID="${RUNTIME##*-}"
+
+          # korz_staging_self_healer_agent -> env "staging", agente "self healer
+          # agent". El prefijo y el guion bajo se repetían en cada mensaje sin
+          # aportar nada. Si el nombre no tiene esa forma, se muestra entero.
+          case "$RUNTIME_NAME" in
+            korz_*_*)
+              ENVNAME="$(printf '%s' "$RUNTIME_NAME" | cut -d_ -f2)"
+              AGENT="$(printf '%s' "$RUNTIME_NAME" | cut -d_ -f3- | tr '_' ' ')"
+              ;;
+            *)
+              ENVNAME="?"; AGENT="$RUNTIME_NAME"
+              ;;
+          esac
+
           if [ "$STATUS" = "success" ]; then
-            TITLE="✅ AgentCore · $RUNTIME"
+            ICON=":rocket:"; COLOR="#2eb886"; ESTADO=""
+            TITLE="$AGENT desplegado a $ENVNAME"
           else
-            TITLE="❌ AgentCore · $RUNTIME FALLÓ"
+            ICON=":rotating_light:"; COLOR="#e01e5a"; ESTADO="  ·  *FALLÓ*"
+            TITLE="$AGENT FALLÓ a $ENVNAME"
           fi
+
+          # Sin bloque `header`: renderiza en un cuerpo grande que con un nombre
+          # de runtime largo envuelve en tres renglones y ocupa media pantalla
+          # para decir una cosa. Una `section` en negrita dice lo mismo en un
+          # renglón.
+          # LA BARRA DE COLOR VA EN `attachments`, NO EN `blocks`.
+          #
+          # Es el borde verde/rojo de la izquierda, y es lo que hace que un
+          # deploy se distinga de un párrafo gris cualquiera al scrollear. Con
+          # `blocks` sueltos no hay forma de pintarla.
+          #
+          # Y el `text` de nivel raíz NO es sólo la notificación push: cuando
+          # hay attachments, Slack lo DIBUJA como una línea extra encima. Poner
+          # ahí el título lo duplicaba. El fallback de la notificación va en
+          # `attachments[].fallback`, que no se dibuja.
           jq -n \
             --arg channel "$CHANNEL" \
-            --arg title "$TITLE" \
-            --arg image "$IMAGE" \
+            --arg fallback "$TITLE" \
+            --arg color "$COLOR" \
+            --arg icon "$ICON" \
+            --arg agent "$AGENT" \
+            --arg env "$ENVNAME" \
+            --arg estado "$ESTADO" \
+            --arg image "$IMAGE_SHORT" \
+            --arg rid "$RUNTIME_ID" \
+            --arg sha "${SHA:0:7}" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" \
             '{channel: $channel,
-              text: $title,
-              blocks: [
-                {type: "header",
-                 text: {type: "plain_text", text: $title, emoji: true}},
-                {type: "section",
-                 text: {type: "mrkdwn", text: "*imagen*\n`\($image)`"}},
-                {type: "context", elements: [
-                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
-                ]}
-              ]}' > /tmp/slack.json
+              attachments: [{
+                color: $color,
+                fallback: $fallback,
+                blocks: [
+                  {type: "section",
+                   text: {type: "mrkdwn",
+                          text: "\($icon)  *\($agent)*  →  `\($env)`\($estado)\n`\($image)`"}},
+                  {type: "context", elements: [
+                    {type: "image",
+                     image_url: "https://github.com/\($actor).png?size=32",
+                     alt_text: $actor},
+                    {type: "mrkdwn",
+                     text: "*\($actor)* · <\($commit_url)|`\($sha)`> · runtime `\($rid)` · <\($run_url)|ver el run>"}
+                  ]}
+                ]}]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
           # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
           # `curl -f` lo deja pasar y el paso queda verde. Se mira `.ok`.
