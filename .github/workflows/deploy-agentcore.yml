@@ -265,28 +265,65 @@ jobs:
           STATUS: ${{ job.status }}
           RUNTIME: ${{ inputs.runtime-id }}
           IMAGE: ${{ inputs.image-uri }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          # Lo que se muestra es lo que CAMBIA entre un deploy y el siguiente.
+          #
+          # La URI entera de ECR es
+          # 642917032014.dkr.ecr.us-east-2.amazonaws.com/korz-agents:<tag>, y de
+          # esos 60 caracteres los primeros 50 son idénticos en todos los
+          # deploys de la historia. Puestos en el mensaje empujan el tag —lo
+          # único que distingue este deploy del anterior— al final de una línea
+          # que envuelve. Queda `repo:tag`.
+          IMAGE_SHORT="${IMAGE##*/}"
+
+          # El runtime-id es <nombre>-<id de AgentCore>. El nombre dice qué
+          # agente es; el sufijo sólo sirve para pegarlo en la consola de AWS,
+          # así que va al pie y no en el título.
+          RUNTIME_NAME="${RUNTIME%-*}"
+          RUNTIME_ID="${RUNTIME##*-}"
+
           if [ "$STATUS" = "success" ]; then
-            TITLE="✅ AgentCore · $RUNTIME"
+            ICON="✅"; VERBO="desplegado"
           else
-            TITLE="❌ AgentCore · $RUNTIME FALLÓ"
+            ICON="❌"; VERBO="FALLÓ"
           fi
+          TITLE="$ICON $RUNTIME_NAME $VERBO"
+
+          # Sin bloque `header`: renderiza en un cuerpo grande que con un nombre
+          # de runtime largo envuelve en tres renglones y ocupa media pantalla
+          # para decir una cosa. Una `section` en negrita dice lo mismo en un
+          # renglón.
           jq -n \
             --arg channel "$CHANNEL" \
             --arg title "$TITLE" \
-            --arg image "$IMAGE" \
+            --arg icon "$ICON" \
+            --arg name "$RUNTIME_NAME" \
+            --arg verbo "$VERBO" \
+            --arg image "$IMAGE_SHORT" \
+            --arg rid "$RUNTIME_ID" \
+            --arg sha "${SHA:0:7}" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" \
             '{channel: $channel,
               text: $title,
               blocks: [
-                {type: "header",
-                 text: {type: "plain_text", text: $title, emoji: true}},
                 {type: "section",
-                 text: {type: "mrkdwn", text: "*imagen*\n`\($image)`"}},
+                 text: {type: "mrkdwn",
+                        text: "\($icon)  *AgentCore* · `\($name)` \($verbo)"}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"},
+                  {type: "mrkdwn", text: "*Runtime*\n`\($rid)`"}
+                ]},
                 {type: "context", elements: [
-                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
+                  {type: "mrkdwn",
+                   text: "<\($commit_url)|`\($sha)`> por *\($actor)* · <\($run_url)|ver el run>"}
                 ]}
               ]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
