@@ -313,39 +313,57 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Primera línea nada más: un commit con cuerpo largo estiraba el
+          # mensaje hasta ocupar la pantalla, y el resto ya está en el link.
+          MSG="$(printf '%s' "$COMMIT_MSG" | head -1 | cut -c1-140)"
+
           if [ "$STATUS" = "success" ]; then
-            TITLE="✅ $SERVICE → staging"
+            ICON=":rocket:"; COLOR="#2eb886"; ESTADO=""
+            TITLE="$SERVICE → staging"
           else
-            TITLE="❌ $SERVICE → staging FALLÓ"
+            ICON=":rotating_light:"; COLOR="#e01e5a"; ESTADO="  ·  *FALLÓ*"
+            TITLE="$SERVICE → staging FALLÓ"
           fi
           # `text` ademas de `blocks`: es lo que Slack muestra en la
           # notificacion push y lo unico que queda si un bloque no renderiza.
+          # LA BARRA DE COLOR VA EN `attachments`, NO EN `blocks`: es el borde
+          # verde/rojo de la izquierda y es lo que distingue un deploy de un
+          # párrafo gris al scrollear. Con `blocks` sueltos no se puede pintar.
+          #
+          # Y el `text` de nivel raíz NO es sólo la notificación push: con
+          # attachments presentes, Slack lo DIBUJA como una línea extra encima,
+          # duplicando el título. El fallback va en `attachments[].fallback`,
+          # que no se dibuja.
           jq -n \
             --arg channel "$CHANNEL" \
-            --arg title "$TITLE" \
-            --arg lambda "$LAMBDA" \
+            --arg fallback "$TITLE" \
+            --arg color "$COLOR" \
+            --arg icon "$ICON" \
+            --arg service "$SERVICE" \
+            --arg env "staging" \
+            --arg estado "$ESTADO" \
+            --arg msg "$MSG" \
             --arg image "$IMAGE" \
             --arg sha "${SHA:0:7}" \
             --arg commit_url "$COMMIT_URL" \
             --arg actor "$ACTOR" \
-            --arg msg "$COMMIT_MSG" \
             --arg run_url "$RUN_URL" \
             '{channel: $channel,
-              text: $title,
-              blocks: [
-                {type: "header",
-                 text: {type: "plain_text", text: $title, emoji: true}},
-                {type: "section", fields: [
-                  {type: "mrkdwn", text: "*Lambda*\n`\($lambda)`"},
-                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"}
-                ]},
-                {type: "section",
-                 text: {type: "mrkdwn",
-                        text: "<\($commit_url)|`\($sha)`> por *\($actor)*\n>\($msg)"}},
-                {type: "context", elements: [
-                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
-                ]}
-              ]}' > /tmp/slack.json
+              attachments: [{
+                color: $color,
+                fallback: $fallback,
+                blocks: [
+                  {type: "section",
+                   text: {type: "mrkdwn",
+                          text: "\($icon)  *\($service)*  →  `\($env)`\($estado)\n>\($msg)"}},
+                  {type: "context", elements: [
+                    {type: "image",
+                     image_url: "https://github.com/\($actor).png?size=32",
+                     alt_text: $actor},
+                    {type: "mrkdwn",
+                     text: "*\($actor)* · <\($commit_url)|`\($sha)`> · `\($image)` · <\($run_url)|ver el run>"}
+                  ]}
+                ]}]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
           #
           # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
@@ -479,39 +497,57 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Primera línea nada más: un commit con cuerpo largo estiraba el
+          # mensaje hasta ocupar la pantalla, y el resto ya está en el link.
+          MSG="$(printf '%s' "$COMMIT_MSG" | head -1 | cut -c1-140)"
+
           if [ "$STATUS" = "success" ]; then
-            TITLE="🚀 $SERVICE → PRODUCCIÓN"
+            ICON=":sparkles:"; COLOR="#ecb22e"; ESTADO=""
+            TITLE="$SERVICE → producción"
           else
-            TITLE="🔥 $SERVICE → PRODUCCIÓN FALLÓ"
+            ICON=":rotating_light:"; COLOR="#e01e5a"; ESTADO="  ·  *FALLÓ*"
+            TITLE="$SERVICE → producción FALLÓ"
           fi
           # `text` ademas de `blocks`: es lo que Slack muestra en la
           # notificacion push y lo unico que queda si un bloque no renderiza.
+          # LA BARRA DE COLOR VA EN `attachments`, NO EN `blocks`: es el borde
+          # verde/rojo de la izquierda y es lo que distingue un deploy de un
+          # párrafo gris al scrollear. Con `blocks` sueltos no se puede pintar.
+          #
+          # Y el `text` de nivel raíz NO es sólo la notificación push: con
+          # attachments presentes, Slack lo DIBUJA como una línea extra encima,
+          # duplicando el título. El fallback va en `attachments[].fallback`,
+          # que no se dibuja.
           jq -n \
             --arg channel "$CHANNEL" \
-            --arg title "$TITLE" \
-            --arg lambda "$LAMBDA" \
+            --arg fallback "$TITLE" \
+            --arg color "$COLOR" \
+            --arg icon "$ICON" \
+            --arg service "$SERVICE" \
+            --arg env "producción" \
+            --arg estado "$ESTADO" \
+            --arg msg "$MSG" \
             --arg image "$IMAGE" \
             --arg sha "${SHA:0:7}" \
             --arg commit_url "$COMMIT_URL" \
             --arg actor "$ACTOR" \
-            --arg msg "$COMMIT_MSG" \
             --arg run_url "$RUN_URL" \
             '{channel: $channel,
-              text: $title,
-              blocks: [
-                {type: "header",
-                 text: {type: "plain_text", text: $title, emoji: true}},
-                {type: "section", fields: [
-                  {type: "mrkdwn", text: "*Lambda*\n`\($lambda)`"},
-                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"}
-                ]},
-                {type: "section",
-                 text: {type: "mrkdwn",
-                        text: "<\($commit_url)|`\($sha)`> por *\($actor)*\n>\($msg)"}},
-                {type: "context", elements: [
-                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
-                ]}
-              ]}' > /tmp/slack.json
+              attachments: [{
+                color: $color,
+                fallback: $fallback,
+                blocks: [
+                  {type: "section",
+                   text: {type: "mrkdwn",
+                          text: "\($icon)  *\($service)*  →  `\($env)`\($estado)\n>\($msg)"}},
+                  {type: "context", elements: [
+                    {type: "image",
+                     image_url: "https://github.com/\($actor).png?size=32",
+                     alt_text: $actor},
+                    {type: "mrkdwn",
+                     text: "*\($actor)* · <\($commit_url)|`\($sha)`> · `\($image)` · <\($run_url)|ver el run>"}
+                  ]}
+                ]}]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
           #
           # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que

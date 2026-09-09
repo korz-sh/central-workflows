@@ -288,23 +288,49 @@ jobs:
           RUNTIME_NAME="${RUNTIME%-*}"
           RUNTIME_ID="${RUNTIME##*-}"
 
+          # korz_staging_self_healer_agent -> env "staging", agente "self healer
+          # agent". El prefijo y el guion bajo se repetían en cada mensaje sin
+          # aportar nada. Si el nombre no tiene esa forma, se muestra entero.
+          case "$RUNTIME_NAME" in
+            korz_*_*)
+              ENVNAME="$(printf '%s' "$RUNTIME_NAME" | cut -d_ -f2)"
+              AGENT="$(printf '%s' "$RUNTIME_NAME" | cut -d_ -f3- | tr '_' ' ')"
+              ;;
+            *)
+              ENVNAME="?"; AGENT="$RUNTIME_NAME"
+              ;;
+          esac
+
           if [ "$STATUS" = "success" ]; then
-            ICON="✅"; VERBO="desplegado"
+            ICON=":rocket:"; COLOR="#2eb886"; ESTADO=""
+            TITLE="$AGENT desplegado a $ENVNAME"
           else
-            ICON="❌"; VERBO="FALLÓ"
+            ICON=":rotating_light:"; COLOR="#e01e5a"; ESTADO="  ·  *FALLÓ*"
+            TITLE="$AGENT FALLÓ a $ENVNAME"
           fi
-          TITLE="$ICON $RUNTIME_NAME $VERBO"
 
           # Sin bloque `header`: renderiza en un cuerpo grande que con un nombre
           # de runtime largo envuelve en tres renglones y ocupa media pantalla
           # para decir una cosa. Una `section` en negrita dice lo mismo en un
           # renglón.
+          # LA BARRA DE COLOR VA EN `attachments`, NO EN `blocks`.
+          #
+          # Es el borde verde/rojo de la izquierda, y es lo que hace que un
+          # deploy se distinga de un párrafo gris cualquiera al scrollear. Con
+          # `blocks` sueltos no hay forma de pintarla.
+          #
+          # Y el `text` de nivel raíz NO es sólo la notificación push: cuando
+          # hay attachments, Slack lo DIBUJA como una línea extra encima. Poner
+          # ahí el título lo duplicaba. El fallback de la notificación va en
+          # `attachments[].fallback`, que no se dibuja.
           jq -n \
             --arg channel "$CHANNEL" \
-            --arg title "$TITLE" \
+            --arg fallback "$TITLE" \
+            --arg color "$COLOR" \
             --arg icon "$ICON" \
-            --arg name "$RUNTIME_NAME" \
-            --arg verbo "$VERBO" \
+            --arg agent "$AGENT" \
+            --arg env "$ENVNAME" \
+            --arg estado "$ESTADO" \
             --arg image "$IMAGE_SHORT" \
             --arg rid "$RUNTIME_ID" \
             --arg sha "${SHA:0:7}" \
@@ -312,20 +338,21 @@ jobs:
             --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" \
             '{channel: $channel,
-              text: $title,
-              blocks: [
-                {type: "section",
-                 text: {type: "mrkdwn",
-                        text: "\($icon)  *AgentCore* · `\($name)` \($verbo)"}},
-                {type: "section", fields: [
-                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"},
-                  {type: "mrkdwn", text: "*Runtime*\n`\($rid)`"}
-                ]},
-                {type: "context", elements: [
-                  {type: "mrkdwn",
-                   text: "<\($commit_url)|`\($sha)`> por *\($actor)* · <\($run_url)|ver el run>"}
-                ]}
-              ]}' > /tmp/slack.json
+              attachments: [{
+                color: $color,
+                fallback: $fallback,
+                blocks: [
+                  {type: "section",
+                   text: {type: "mrkdwn",
+                          text: "\($icon)  *\($agent)*  →  `\($env)`\($estado)\n`\($image)`"}},
+                  {type: "context", elements: [
+                    {type: "image",
+                     image_url: "https://github.com/\($actor).png?size=32",
+                     alt_text: $actor},
+                    {type: "mrkdwn",
+                     text: "*\($actor)* · <\($commit_url)|`\($sha)`> · runtime `\($rid)` · <\($run_url)|ver el run>"}
+                  ]}
+                ]}]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
           # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
           # `curl -f` lo deja pasar y el paso queda verde. Se mira `.ok`.

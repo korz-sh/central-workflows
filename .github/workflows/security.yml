@@ -194,28 +194,44 @@ jobs:
           # `text` además de `blocks`: es lo que Slack manda en la notificación
           # push y lo único que queda si un bloque no renderiza. Un mensaje que
           # llega vacío se lee igual que ningún mensaje.
+          # LA BARRA DE COLOR VA EN `attachments`, NO EN `blocks`.
+          #
+          # Es el borde rojo de la izquierda, y en un canal que sólo recibe
+          # fallas es lo que hace que el mensaje se lea como una alarma y no
+          # como un párrafo gris más. Con `blocks` sueltos no se puede pintar.
+          #
+          # Y el `text` de nivel raíz NO es sólo la notificación push: con
+          # attachments presentes, Slack lo DIBUJA como una línea extra encima.
+          # El fallback va en `attachments[].fallback`, que no se dibuja.
           jq -n \
             --arg channel "$CHANNEL" \
             --arg repo "${{ github.repository }}" \
+            --arg reponame "${{ github.event.repository.name }}" \
             --arg origin "$ORIGIN" \
             --arg sast "$(fmt "$SAST")" \
             --arg sc "$(fmt "$SUPPLY_CHAIN")" \
+            --arg actor "${{ github.actor }}" \
             --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             '{channel: $channel,
-              text: "🔒 \($repo) — SAST \($sast) · supply-chain \($sc)",
-              blocks: [
-                {type: "header",
-                 text: {type: "plain_text", text: "🔒 \($repo)", emoji: true}},
-                {type: "section", text: {type: "mrkdwn", text: $origin}},
-                {type: "section", fields: [
-                  {type: "mrkdwn", text: "*SAST (semgrep)*\n\($sast)"},
-                  {type: "mrkdwn", text: "*Supply chain (trivy)*\n\($sc)"}
-                ]},
-                {type: "context", elements: [
-                  {type: "mrkdwn",
-                   text: "<\($url)|ver el run> · los hallazgos completos están en el log del job"}
-                ]}
-              ]}' > /tmp/slack.json
+              attachments: [{
+                color: "#e01e5a",
+                fallback: "\($repo) — SAST \($sast) · supply-chain \($sc)",
+                blocks: [
+                  {type: "section",
+                   text: {type: "mrkdwn",
+                          text: ":lock:  *\($reponame)*\n\($origin)"}},
+                  {type: "section", fields: [
+                    {type: "mrkdwn", text: "*SAST* (semgrep)\n\($sast)"},
+                    {type: "mrkdwn", text: "*Supply chain* (trivy)\n\($sc)"}
+                  ]},
+                  {type: "context", elements: [
+                    {type: "image",
+                     image_url: "https://github.com/\($actor).png?size=32",
+                     alt_text: $actor},
+                    {type: "mrkdwn",
+                     text: "<\($url)|ver el run> · los hallazgos completos están en el log del job"}
+                  ]}
+                ]}]}' > /tmp/slack.json
           # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
           #
           # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, así que
