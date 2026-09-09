@@ -165,10 +165,37 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "CODEARTIFACT_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
+      # UN TAG QUE IDENTIFICA A LA IMAGEN, no al segundo en que arrancó el job.
+      #
+      # Esto era `v$(date +'%Y%m%d.%H%M%S')` y colisionaba. No en teoría:
+      # korz-agents buildea cuatro agentes en paralelo desde el mismo commit, y
+      # el 2026-09-09 dos de ellos —git-pr y planner— arrancaron dentro del
+      # mismo segundo y produjeron `v20260909.183251` los dos. El segundo pisó
+      # al primero en ECR.
+      #
+      # Lo que costó: el runtime del agente de PRs quedó corriendo la app del
+      # PLANNER, y `deploy-agentcore` no podía notarlo — le pasó el tag de SU
+      # build, que era el correcto, apuntando a la imagen equivocada. Se
+      # encontró invocando el runtime y leyendo el `agent_type` de la respuesta.
+      #
+      # Es el mismo defecto que este archivo ya tenía con `:latest` y que dejó
+      # seis Lambdas nueve días con código viejo mientras cada deploy reportaba
+      # éxito: UN IDENTIFICADOR DE IMAGEN QUE NO IDENTIFICA. El tag inmutable se
+      # adoptó para arreglarlo, y era inmutable pero no único.
+      #
+      # El sufijo es el hash del dockerfile + el run attempt:
+      #   - el DOCKERFILE es lo que distingue a dos imágenes del mismo repo y
+      #     del mismo commit, que es exactamente el caso que colisionó;
+      #   - `run_attempt` hace que un re-run produzca un tag nuevo en vez de
+      #     reescribir el anterior, que es un tag inmutable que se mueve.
+      #
+      # Sigue empezando con la fecha a propósito: ordena en la consola de ECR y
+      # el lifecycle de `registries` cuenta imágenes, no interpreta el nombre.
       - name: Generate version
         id: version
         run: |
-          VERSION="v$(date +'%Y%m%d.%H%M%S')"
+          SUFFIX="$(printf '%s' '${{ inputs.dockerfile }}' | sha256sum | cut -c1-7)"
+          VERSION="v$(date +'%Y%m%d.%H%M%S')-${SUFFIX}.${{ github.run_attempt }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "📦 Version: ${VERSION}"
 
@@ -207,8 +234,26 @@ jobs:
           # own cache. type=gha is fine here — every consumer of this reusable ships a
           # small .NET/Python image (NOT the heavy mcp images, which stay on registry
           # cache to avoid the 10GB gha limit).
-          cache-from: type=gha,scope=${{ inputs.ecr-repo }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}
+          #
+          # EL SCOPE LLEVA LA RUTA DEL DOCKERFILE, no sólo el repo de ECR, y por
+          # lo mismo que el tag de arriba: `korz-agents` publica CUATRO imágenes
+          # distintas en un repo. Con el scope por repo los cuatro builds
+          # escribían el mismo caché y se lo pisaban entre sí — cada uno subiendo
+          # capas que el siguiente no podía usar, que es peor que no cachear: se
+          # paga la subida y no se cobra el acierto.
+          #
+          # El comentario de arriba ya nombraba el caso (korz-query build +
+          # build-deployer) y lo resolvía por repo porque entonces alcanzaba.
+          # Con cuatro imágenes por repo ya no.
+          #
+          # La RUTA y no `hashFiles(...)` del contenido: el scope tiene que ser
+          # estable a través de los commits, porque un scope que cambia cuando
+          # cambia el Dockerfile invalida el caché justo cuando más se necesita
+          # —el build que sigue a una edición— y deja basura acumulada con cada
+          # hash viejo. Lo que hay que distinguir es QUÉ IMAGEN es, no qué
+          # versión.
+          cache-from: type=gha,scope=${{ inputs.ecr-repo }}-${{ inputs.dockerfile }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.ecr-repo }}-${{ inputs.dockerfile }}
 
       - name: Set image URI metadata
         id: meta
