@@ -224,40 +224,83 @@ jobs:
 
       # ── 5. Avisar ────────────────────────────────────────────────────────
       #
-      # Ocho repos ya notifican a Discord desde deploy-lambda y web-client no lo
-      # hacía — se descubrió cuando un deploy falló en silencio. No repetir eso
-      # acá desde el primer día.
-      - name: Leer el webhook de Discord
-        id: discord
+      # Ocho repos ya notifican desde deploy-lambda y web-client no lo hacía —
+      # se descubrió cuando un deploy falló en silencio. No repetir eso acá
+      # desde el primer día.
+      #
+      # Slack, no Discord (KOR-374). Mismo canal que el resto de los deploys:
+      # #korz-deploys, privado.
+      - name: Leer el token de Slack
+        id: slack
         if: always()
         continue-on-error: true
         # SIN `|| true`. El linter de este repo lo prohibe y tiene razon: un
         # exit code tragado esconde TODOS los fallos del paso, no solo el que
         # uno tenia en mente. `continue-on-error` arriba ya dice que este paso
         # es opcional, que es el mecanismo correcto — si el parametro no
-        # existe, el paso falla, el job sigue, y el `webhook` queda vacio, con
+        # existe, el paso falla, el job sigue, y el `token` queda vacio, con
         # lo cual el paso de notificar se saltea solo.
         run: |
           # --region us-east-1 A PROPOSITO, y no el de este workflow: los
-          # parametros de Discord viven SOLO en us-east-1 y el rol de CI tiene
+          # parametros de Slack viven SOLO en us-east-1 y el rol de CI tiene
           # el permiso acotado a esa region. Sin esto el paso muere con
           # AccessDeniedException sobre un ARN de us-east-2 — que es lo que paso
           # en el primer deploy real de korz-agents. deploy-lambda.yml ya lo
           # pasa; este workflow se escribio sin mirarlo.
-          WEBHOOK=$(aws ssm get-parameter \
-            --name /korz/discord-webhook-url \
+          TOKEN=$(aws ssm get-parameter \
+            --name /korz/slack-bot-token \
             --with-decryption \
             --region us-east-1 \
             --query 'Parameter.Value' --output text)
-          echo "::add-mask::$WEBHOOK"
-          echo "webhook=$WEBHOOK" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Notificar a Discord
-        if: always() && steps.discord.outputs.webhook != ''
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ steps.discord.outputs.webhook }}
-          title: 'AgentCore · ${{ inputs.runtime-id }}'
-          description: |
-            imagen: `${{ inputs.image-uri }}`
-          nofail: true
+      - name: "Notificar a #korz-deploys"
+        if: always() && steps.slack.outputs.token != ''
+        continue-on-error: true
+        env:
+          TOKEN: ${{ steps.slack.outputs.token }}
+          # C0C0KAX1TN1 es #korz-deploys.
+          CHANNEL: C0C0KAX1TN1
+          STATUS: ${{ job.status }}
+          RUNTIME: ${{ inputs.runtime-id }}
+          IMAGE: ${{ inputs.image-uri }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$STATUS" = "success" ]; then
+            TITLE="✅ AgentCore · $RUNTIME"
+          else
+            TITLE="❌ AgentCore · $RUNTIME FALLÓ"
+          fi
+          jq -n \
+            --arg channel "$CHANNEL" \
+            --arg title "$TITLE" \
+            --arg image "$IMAGE" \
+            --arg run_url "$RUN_URL" \
+            '{channel: $channel,
+              text: $title,
+              blocks: [
+                {type: "header",
+                 text: {type: "plain_text", text: $title, emoji: true}},
+                {type: "section",
+                 text: {type: "mrkdwn", text: "*imagen*\n`\($image)`"}},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
+                ]}
+              ]}' > /tmp/slack.json
+          # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
+          # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
+          # `curl -f` lo deja pasar y el paso queda verde. Se mira `.ok`.
+          #
+          # `nofail: true` de la action anterior no tiene equivalente ni hace
+          # falta: `continue-on-error` ya impide que esto bloquee el deploy, y
+          # lo que se gana es que un token roto se VEA en rojo.
+          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @/tmp/slack.json)
+          if [ "$(printf '%s' "$RESP" | jq -r '.ok')" != "true" ]; then
+            echo "::error::Slack rechazo el aviso: $(printf '%s' "$RESP" | jq -r '.error // "respuesta ilegible"')"
+            exit 1
+          fi

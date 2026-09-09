@@ -136,13 +136,17 @@ jobs:
           fi
 
       # Un scan rojo que nadie ve es igual a un scan verde (la lección de
-      # KOR-340, una capa más arriba). El canal de security de Discord recibe
-      # SOLO fallas: sast/supply-chain con hallazgos, o scans que no corrieron.
+      # KOR-340, una capa más arriba). #korz-security en Slack recibe SOLO
+      # fallas: sast/supply-chain con hallazgos, o scans que no corrieron.
       # El caso schedule es el que importa: una CVE nueva aparece un lunes a
       # las 06:00 sin que nadie toque código ni mire Actions.
-      # El webhook viene de SSM (us-east-1, junto al de deploys); si el
-      # parámetro no existe el paso se saltea sin romper el gate.
-      - name: Configure AWS credentials (for SSM webhook)
+      # El token viene de SSM (us-east-1, junto al resto); si el parámetro no
+      # existe el paso se saltea sin romper el gate.
+      #
+      # El canal es PRIVADO a propósito (KOR-374): este mensaje lleva el nombre
+      # de un repo privado y si hubo hallazgos, y el Slack de korz.sh es
+      # comunitario — entran partners y clientes.
+      - name: Configure AWS credentials (for the Slack token)
         if: failure()
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -155,16 +159,20 @@ jobs:
         env:
           SAST: ${{ needs.sast.result }}
           SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
+          # C0C08FQ1J87 es #korz-security. Va el ID y no el nombre: renombrar
+          # un canal no debe romper el aviso en 15 repos a la vez.
+          CHANNEL: C0C08FQ1J87
         run: |
           # Sin || ni fallback: el paso entero es continue-on-error, así que
           # un SSM sin parámetro o sin permiso queda VISIBLE como paso rojo
           # (no bloquea el gate) en vez de tragado — la notificación de
           # deploys estuvo muerta en silencio meses por el patrón || echo.
-          WEBHOOK=$(aws ssm get-parameter \
-            --name /korz/discord-security-webhook-url \
+          TOKEN=$(aws ssm get-parameter \
+            --name /korz/slack-bot-token \
             --with-decryption --query 'Parameter.Value' --output text \
             --region us-east-1)
-          # Embed en vez de texto pelado: el canal se lee de un vistazo y el
+          echo "::add-mask::$TOKEN"
+          # Block Kit en vez de texto pelado: el canal se lee de un vistazo y el
           # scan semanal —el que nadie está mirando cuando aparece una CVE—
           # se distingue del push a mano.
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -183,20 +191,43 @@ jobs:
               *) echo "⚠️ $1" ;;
             esac
           }
+          # `text` además de `blocks`: es lo que Slack manda en la notificación
+          # push y lo único que queda si un bloque no renderiza. Un mensaje que
+          # llega vacío se lee igual que ningún mensaje.
           jq -n \
-            --arg title "🔒 ${{ github.repository }}" \
+            --arg channel "$CHANNEL" \
+            --arg repo "${{ github.repository }}" \
             --arg origin "$ORIGIN" \
             --arg sast "$(fmt "$SAST")" \
             --arg sc "$(fmt "$SUPPLY_CHAIN")" \
             --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            '{username: "korz security",
-              embeds: [{
-                title: $title, url: $url, color: 15158332,
-                description: $origin,
-                fields: [
-                  {name: "SAST (semgrep)", value: $sast, inline: true},
-                  {name: "Supply chain (trivy)", value: $sc, inline: true}
-                ],
-                footer: {text: "los hallazgos completos están en el log del job"}
-              }]}' > /tmp/discord.json
-          curl -sf -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @/tmp/discord.json
+            '{channel: $channel,
+              text: "🔒 \($repo) — SAST \($sast) · supply-chain \($sc)",
+              blocks: [
+                {type: "header",
+                 text: {type: "plain_text", text: "🔒 \($repo)", emoji: true}},
+                {type: "section", text: {type: "mrkdwn", text: $origin}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: "*SAST (semgrep)*\n\($sast)"},
+                  {type: "mrkdwn", text: "*Supply chain (trivy)*\n\($sc)"}
+                ]},
+                {type: "context", elements: [
+                  {type: "mrkdwn",
+                   text: "<\($url)|ver el run> · los hallazgos completos están en el log del job"}
+                ]}
+              ]}' > /tmp/slack.json
+          # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
+          #
+          # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, así que
+          # `curl -f` lo deja pasar y el paso queda verde. Un token revocado,
+          # un canal archivado o un bot expulsado se verían exactamente igual
+          # que un aviso entregado — el fake pass de siempre, una capa más
+          # abajo. Se mira `.ok`, que es la única respuesta honesta que da.
+          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @/tmp/slack.json)
+          if [ "$(printf '%s' "$RESP" | jq -r '.ok')" != "true" ]; then
+            echo "::error::Slack rechazó el aviso: $(printf '%s' "$RESP" | jq -r '.error // "respuesta ilegible"')"
+            exit 1
+          fi

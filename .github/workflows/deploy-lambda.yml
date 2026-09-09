@@ -151,7 +151,7 @@ jobs:
       # INVOCARLA. `wait function-updated` sólo dice que AWS terminó de cambiar
       # la configuración: no ejecuta el código ni una vez. Una imagen con un
       # import roto, un handler mal nombrado o una dependencia faltante pasa ese
-      # wait sin problema, y el deploy se anuncia como éxito en Discord mientras
+      # wait sin problema, y el deploy se anuncia como éxito en Slack mientras
       # el servicio devuelve 502 a todo el mundo. El primero en enterarse es un
       # usuario.
       #
@@ -264,36 +264,103 @@ jobs:
 
           echo "✅ La función arranca y responde."
 
-      - name: Fetch Discord webhook from SSM
-        id: discord
+      # Slack, no Discord (KOR-374), y un bot token en vez de una action de
+      # tercero: el mismo patron que ya usa security.yml, con una dependencia
+      # menos en la cadena de CI.
+      #
+      # El bug que esto cierra de paso: la action pedia `webhook` y el workflow
+      # le pasaba `webhook_url`. La action avisaba con un warning y seguia en
+      # VERDE sin mandar nada — meses de silencio que se leian como "no hubo
+      # deploys".
+      #
+      # #korz-deploys es PRIVADO: el Slack de korz.sh es comunitario (entran
+      # partners y clientes) y este mensaje nombra repos e imagenes internas.
+      - name: Leer el token de Slack (SSM)
+        id: slack
+        if: always()
+        continue-on-error: true
+        # Sin `|| echo ""`: tragarse el exit code es exactamente lo que dejo
+        # muerta la notificacion anterior. `continue-on-error` ya dice que el
+        # paso es opcional, y un SSM sin parametro queda VISIBLE en rojo.
         run: |
-          WEBHOOK=$(aws ssm get-parameter \
-            --name /korz/discord-webhook-url \
-            --with-decryption \
-            --query 'Parameter.Value' \
-            --output text \
-            --region us-east-1 2>/dev/null || echo "")
-          echo "webhook=$WEBHOOK" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          TOKEN=$(aws ssm get-parameter \
+            --name /korz/slack-bot-token \
+            --with-decryption --query 'Parameter.Value' --output text \
+            --region us-east-1)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      # `webhook`, NO `webhook_url`: con el nombre equivocado la action tira
-      # un warning ("Unexpected input(s) 'webhook_url'") y sigue en verde sin
-      # mandar nada. Así estuvo desde que se escribió: cero mensajes, cero
-      # señales de que algo faltaba.
-      - name: Notify Discord (staging)
-        if: always() && steps.discord.outputs.webhook != ''
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ steps.discord.outputs.webhook }}
-          status: ${{ job.status }}
-          nodetail: true
-          username: korz deploys
-          title: ${{ job.status == 'success' && format('✅ {0} → staging', inputs.ecr-repo) || format('❌ {0} → staging FALLÓ', inputs.ecr-repo) }}
-          description: |
-            **Lambda** `${{ vars.LAMBDA_FUNCTION_STAGING }}` · **imagen** `${{ inputs.ecr-repo }}:latest`
-            **Commit** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) por **${{ github.actor }}**
-            > ${{ github.event.head_commit.message && github.event.head_commit.message || inputs.trigger-branch }}
-            [ver el run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          color: ${{ job.status == 'success' && 3066993 || 15158332 }}
+      - name: "Avisar a #korz-deploys"
+        if: always() && steps.slack.outputs.token != ''
+        continue-on-error: true
+        # Todo por `env`, nada interpolado dentro del script: el mensaje de
+        # commit lo escribe quien mando el push y `${{ }}` lo pegaria como
+        # texto del shell.
+        env:
+          TOKEN: ${{ steps.slack.outputs.token }}
+          # C0C0KAX1TN1 es #korz-deploys. Va el ID y no el nombre: renombrar el
+          # canal no debe romper el aviso de los 15 repos a la vez.
+          CHANNEL: C0C0KAX1TN1
+          STATUS: ${{ job.status }}
+          SERVICE: ${{ inputs.ecr-repo }}
+          LAMBDA: ${{ vars.LAMBDA_FUNCTION_STAGING }}
+          IMAGE: ${{ inputs.ecr-repo }}:latest
+          COMMIT_MSG: ${{ github.event.head_commit.message || inputs.trigger-branch }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$STATUS" = "success" ]; then
+            TITLE="✅ $SERVICE → staging"
+          else
+            TITLE="❌ $SERVICE → staging FALLÓ"
+          fi
+          # `text` ademas de `blocks`: es lo que Slack muestra en la
+          # notificacion push y lo unico que queda si un bloque no renderiza.
+          jq -n \
+            --arg channel "$CHANNEL" \
+            --arg title "$TITLE" \
+            --arg lambda "$LAMBDA" \
+            --arg image "$IMAGE" \
+            --arg sha "${SHA:0:7}" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg actor "$ACTOR" \
+            --arg msg "$COMMIT_MSG" \
+            --arg run_url "$RUN_URL" \
+            '{channel: $channel,
+              text: $title,
+              blocks: [
+                {type: "header",
+                 text: {type: "plain_text", text: $title, emoji: true}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: "*Lambda*\n`\($lambda)`"},
+                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"}
+                ]},
+                {type: "section",
+                 text: {type: "mrkdwn",
+                        text: "<\($commit_url)|`\($sha)`> por *\($actor)*\n>\($msg)"}},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
+                ]}
+              ]}' > /tmp/slack.json
+          # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
+          #
+          # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
+          # `curl -f` lo deja pasar y el paso queda verde. Un token revocado,
+          # un canal archivado o un bot expulsado se verian exactamente igual
+          # que un aviso entregado. Se mira `.ok`, que es la unica respuesta
+          # honesta que da.
+          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @/tmp/slack.json)
+          if [ "$(printf '%s' "$RESP" | jq -r '.ok')" != "true" ]; then
+            echo "::error::Slack rechazo el aviso: $(printf '%s' "$RESP" | jq -r '.error // "respuesta ilegible"')"
+            exit 1
+          fi
 
   deploy-prod:
     if: inputs.build-conclusion == 'success' && inputs.prod-branch != '' && inputs.trigger-branch == inputs.prod-branch
@@ -370,29 +437,93 @@ jobs:
             git push origin "${TAG}-prod"
           fi
 
-      - name: Fetch Discord webhook from SSM
-        id: discord
+      # Mismo canal y mismo formato que staging (KOR-374): #korz-deploys en
+      # Slack, privado. Un deploy a prod y uno a staging se leen juntos a
+      # proposito — lo que cambia es el titulo, no el canal, y asi "que se
+      # desployo hoy" es una sola lectura.
+      - name: Leer el token de Slack (SSM)
+        id: slack
+        if: always()
+        continue-on-error: true
+        # Sin `|| echo ""`: tragarse el exit code es exactamente lo que dejo
+        # muerta la notificacion anterior. `continue-on-error` ya dice que el
+        # paso es opcional, y un SSM sin parametro queda VISIBLE en rojo.
         run: |
-          WEBHOOK=$(aws ssm get-parameter \
-            --name /korz/discord-webhook-url \
-            --with-decryption \
-            --query 'Parameter.Value' \
-            --output text \
-            --region us-east-1 2>/dev/null || echo "")
-          echo "webhook=$WEBHOOK" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          TOKEN=$(aws ssm get-parameter \
+            --name /korz/slack-bot-token \
+            --with-decryption --query 'Parameter.Value' --output text \
+            --region us-east-1)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Notify Discord (prod)
-        if: always() && steps.discord.outputs.webhook != ''
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ steps.discord.outputs.webhook }}
-          status: ${{ job.status }}
-          nodetail: true
-          username: korz deploys
-          title: ${{ job.status == 'success' && format('🚀 {0} → PRODUCCIÓN', inputs.ecr-repo) || format('🔥 {0} → PRODUCCIÓN FALLÓ', inputs.ecr-repo) }}
-          description: |
-            **Lambda** `${{ vars.LAMBDA_FUNCTION_PROD }}` · **imagen** `${{ inputs.ecr-repo }}:latest`
-            **Commit** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) por **${{ github.actor }}**
-            > ${{ github.event.head_commit.message && github.event.head_commit.message || inputs.trigger-branch }}
-            [ver el run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          color: ${{ job.status == 'success' && 15844367 || 15158332 }}
+      - name: "Avisar a #korz-deploys (prod)"
+        if: always() && steps.slack.outputs.token != ''
+        continue-on-error: true
+        # Todo por `env`, nada interpolado dentro del script: el mensaje de
+        # commit lo escribe quien mando el push y `${{ }}` lo pegaria como
+        # texto del shell.
+        env:
+          TOKEN: ${{ steps.slack.outputs.token }}
+          # C0C0KAX1TN1 es #korz-deploys. Va el ID y no el nombre: renombrar el
+          # canal no debe romper el aviso de los 15 repos a la vez.
+          CHANNEL: C0C0KAX1TN1
+          STATUS: ${{ job.status }}
+          SERVICE: ${{ inputs.ecr-repo }}
+          LAMBDA: ${{ vars.LAMBDA_FUNCTION_PROD }}
+          IMAGE: ${{ inputs.ecr-repo }}:latest
+          COMMIT_MSG: ${{ github.event.head_commit.message || inputs.trigger-branch }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$STATUS" = "success" ]; then
+            TITLE="🚀 $SERVICE → PRODUCCIÓN"
+          else
+            TITLE="🔥 $SERVICE → PRODUCCIÓN FALLÓ"
+          fi
+          # `text` ademas de `blocks`: es lo que Slack muestra en la
+          # notificacion push y lo unico que queda si un bloque no renderiza.
+          jq -n \
+            --arg channel "$CHANNEL" \
+            --arg title "$TITLE" \
+            --arg lambda "$LAMBDA" \
+            --arg image "$IMAGE" \
+            --arg sha "${SHA:0:7}" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg actor "$ACTOR" \
+            --arg msg "$COMMIT_MSG" \
+            --arg run_url "$RUN_URL" \
+            '{channel: $channel,
+              text: $title,
+              blocks: [
+                {type: "header",
+                 text: {type: "plain_text", text: $title, emoji: true}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: "*Lambda*\n`\($lambda)`"},
+                  {type: "mrkdwn", text: "*Imagen*\n`\($image)`"}
+                ]},
+                {type: "section",
+                 text: {type: "mrkdwn",
+                        text: "<\($commit_url)|`\($sha)`> por *\($actor)*\n>\($msg)"}},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: "<\($run_url)|ver el run>"}
+                ]}
+              ]}' > /tmp/slack.json
+          # LA WEB API DE SLACK CONTESTA HTTP 200 CUANDO FALLA.
+          #
+          # `{"ok":false,"error":"invalid_auth"}` viaja en un 200, asi que
+          # `curl -f` lo deja pasar y el paso queda verde. Un token revocado,
+          # un canal archivado o un bot expulsado se verian exactamente igual
+          # que un aviso entregado. Se mira `.ok`, que es la unica respuesta
+          # honesta que da.
+          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @/tmp/slack.json)
+          if [ "$(printf '%s' "$RESP" | jq -r '.ok')" != "true" ]; then
+            echo "::error::Slack rechazo el aviso: $(printf '%s' "$RESP" | jq -r '.error // "respuesta ilegible"')"
+            exit 1
+          fi
