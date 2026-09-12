@@ -47,6 +47,33 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      # KOR-395. The per-toolchain runner image (KOR-363) preinstalls the SDK in
+      # /usr/share/dotnet as root; setup-dotnet runs as `runner` and installs
+      # into that same directory. `10.0.x` floats to the newest patch, so the
+      # day 10.0.12 shipped every .NET job started dying:
+      #
+      #   cp: cannot create directory '/usr/share/dotnet/host/fxr/10.0.12/': Permission denied
+      #
+      # Chowning is the fix rather than pointing DOTNET_INSTALL_DIR at
+      # $HOME/.dotnet: these runners are EPHEMERAL (one job per Fargate task),
+      # so $HOME is empty every job and setup-dotnet would download the whole
+      # SDK every time -- the exact 45-60s per job KOR-363 existed to remove.
+      # Left on /usr/share/dotnet it reuses the preinstalled SDK whenever the
+      # patch still matches, and only downloads when it genuinely drifted.
+      #
+      # Guarded on writability: a no-op on GitHub-hosted runners, and a no-op
+      # again once the image itself ships this directory owned by `runner`.
+      - name: Make the preinstalled .NET SDK writable
+        shell: bash
+        run: |
+          if [ -d /usr/share/dotnet ] && [ ! -w /usr/share/dotnet ]; then
+            sudo chown -R "$(id -u):$(id -g)" /usr/share/dotnet
+            echo "chowned /usr/share/dotnet to $(id -un)"
+          else
+            echo "/usr/share/dotnet absent or already writable, nothing to do"
+          fi
+
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
@@ -71,6 +98,27 @@ jobs:
           # ~/.nuget/packages already survives between jobs. actions/cache is
           # solving a problem that only exists on ephemeral hosted runners, and
           # charging a 691 MB untar over the working directory for it.
+
+      # KOR-395. setup-dotnet reports a failed RUNTIME install as `##[warning]`
+      # and carries on -- only the SDK install failing turns the step red. In
+      # run 34667114070 both failed, but the runtime one alone would have left
+      # a green step and no usable `dotnet`, and the first thing to notice would
+      # have been `dotnet restore` failing for reasons that have nothing to do
+      # with restore. Same defect as KOR-155's `|| echo`: a check whose failure
+      # is reported as a warning is a check that can only say one thing.
+      - name: Assert the requested SDK is actually installed
+        shell: bash
+        run: |
+          requested='${{ inputs.dotnet-version }}'   # e.g. 10.0.x
+          expected="${requested%.*}"                 # e.g. 10.0
+          actual="$(dotnet --version)"
+          echo "requested ${expected}.x, got ${actual}"
+          dotnet --list-sdks
+          case "$actual" in
+            "$expected".*) ;;
+            *) echo "::error::dotnet ${actual} does not satisfy ${requested}"; exit 1 ;;
+          esac
+
       # GitHub Packages requires auth even to READ, and Korz.Shared.Contracts
       # lives there. Without this, `dotnet restore` fails with NU1101 ("no
       # packages exist with this id") for any consumer that does not vendor a
