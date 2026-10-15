@@ -13,6 +13,7 @@ from pathlib import Path
 HOSTED = "(github.event.repository.private == false || vars.KORZ_RUNNER_BACKEND == 'github')"
 
 
+# @spec scripts/transform
 def transform(text):
     job = None
     result = []
@@ -39,6 +40,7 @@ def transform(text):
     return "".join(result)
 
 
+# @spec scripts/main
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
