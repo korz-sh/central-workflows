@@ -127,12 +127,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
           aws-region: ${{ inputs.aws-region }}
 
-      # FROM lines on public.ecr.aws (lambda/python, docker/library/*) are pulled
-      # by the build below. Anonymous pulls are rate limited per runner IP; this
-      # login uses the OIDC role above and a 12h token, never a stored secret.
-      - name: Login to ECR Public
-        run: aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
