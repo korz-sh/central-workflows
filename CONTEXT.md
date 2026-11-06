@@ -116,8 +116,8 @@ repeats the note. Consumers run on persistent self-hosted runners where `~/.nuge
   supply-chain-scan/      107 L  trivy fs (vuln,secret,misconfig) + optional .NET lockfile gate.
 ```
 
-Composite actions, not reusable workflows — see §2. The job-level `container: semgrep/semgrep:1.172.0`
-stays in the *caller* (`security.yml:34`) because a composite action cannot declare one.
+Composite actions, not reusable workflows — see §2. Semgrep runs without a container: `semgrep-scan` installs the pinned version with pip when the
+binary is missing, because the image is only on Docker Hub.
 
 `ci-*.yml` absorbed the old `{dotnet,go,node}-pr-check.yml` (deleted in `cfd84f5`) and
 `deploy-{vercel,web-client}.yml` (deleted in `44de6ed`). Those pr-check files each did their own
